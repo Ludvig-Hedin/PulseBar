@@ -1,0 +1,26 @@
+name: PulseBar
+options:
+  bundleIdPrefix: com.ludvighedin
+targets:
+  PulseBar:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: App
+      - path: Models
+      - path: Services
+      - path: Utilities
+      - path: ViewModels
+      - path: Views
+    info:
+      path: Info.plist
+      properties:
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: PulseBar.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""

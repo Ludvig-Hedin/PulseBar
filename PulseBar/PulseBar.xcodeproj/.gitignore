@@ -1,0 +1,60 @@
+# Xcode
+DerivedData/
+build/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Swift Package Manager
+/.build/
+/Packages/
+Package.pins
+Package.resolved
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# User-specific
+*.swp
+*.swo
+*.orig
+
+# Archives
+*.xcuserstate
+*.xcscmblueprint
+
+# Generated
+*.dSYM
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Logs
+*.log
+
+# Xcode 13+ new build system intermediates
+*.xcactivitylog
+
+# SwiftPM integration in Xcode
+.swiftpm/xcode/package.xcworkspace/xcuserdata/
+.swiftpm/xcode/xcuserdata/
+
+# Index
+Index/DataStore/
+
+# SPM artifacts
+Artifacts/
