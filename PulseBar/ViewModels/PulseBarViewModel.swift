@@ -48,6 +48,10 @@ final class PulseBarViewModel: ObservableObject {
     @Published var selectedProcessPIDs: Set<Int32> = []
     @Published var visibleColumns: Set<VisibleColumn> = [.ports, .cpu, .memory, .uptime]
 
+    /// Wall-clock time of the last full refresh (process enumeration).
+    /// Drives the "Updated Xs ago" stamp so the user trusts the data they see.
+    @Published private(set) var lastFullRefresh: Date?
+
     /// Short CPU history (last ~60 samples) for the sparkline. Kept deliberately small.
     @Published private(set) var cpuHistory: [Double] = []
     @Published private(set) var ramHistory: [Double] = []
@@ -60,10 +64,37 @@ final class PulseBarViewModel: ObservableObject {
     private let batteryService = BatteryService()
     private let alertsService = AlertsService()
     private let killService = KillService()
+    private let autoQuitService = AutoQuitService()
+    /// Owned by `AppState`. Refreshed once per tick so the Overview disk tile and the
+    /// Storage tab share a single, cheap source of truth.
+    weak var storageService: StorageService?
+
+    init(storageService: StorageService? = nil) {
+        self.storageService = storageService
+    }
+
+    // MARK: - Auto-Quit
+    /// Most recent events surfaced by the Auto-Quit pipeline. UI binds to this.
+    @Published private(set) var autoQuitEvents: [AutoQuitEvent] = []
+
+    // MARK: - Selection state for shift/cmd multi-select
+    /// PID of the most recently toggled row, used as the anchor for shift-click range selection.
+    @Published var lastSelectedPID: Int32?
+
+    // MARK: - Process view mode
+    /// Table vs cards rendering for the Processes view. Persisted to UserDefaults.
+    @Published var processViewMode: PreferencesService.ProcessViewMode = PreferencesService.shared.processViewMode {
+        didSet { PreferencesService.shared.processViewMode = processViewMode }
+    }
 
     // MARK: - Timing
     private var timer: Timer?
     private var tickCount = 0
+    /// Guards against overlapping refresh tasks. Multiple triggers (timer + manual
+    /// Refresh button + post-kill `asyncAfter`) can otherwise spawn concurrent refresh
+    /// Tasks whose completion order is non-deterministic, letting a stale snapshot land
+    /// after a fresher one.
+    private var isRefreshing = false
     /// Toggled by the app when no UI is visible — polling slows down drastically.
     var isInBackground: Bool = false {
         didSet { if oldValue != isInBackground { restartTimer() } }
@@ -74,7 +105,7 @@ final class PulseBarViewModel: ObservableObject {
     }
 
     var menuBarSymbol: String {
-        if snapshot.memoryPressure == .critical || snapshot.cpuUsagePercent > 90 {
+        if isCritical {
             return "exclamationmark.triangle.fill"
         }
         if snapshot.cpuUsagePercent > 70 {
@@ -83,25 +114,40 @@ final class PulseBarViewModel: ObservableObject {
         return "speedometer"
     }
 
-    /// Short text shown next to the menu-bar icon based on enabled metrics.
-    /// Single metric: bare "85%" format. Both enabled: prefixed "CPU 85%  MEM 72%".
+    /// True when the system is in a state the user should act on immediately.
+    /// Drives both icon swap and the menu-bar text color so the signal is louder.
+    var isCritical: Bool {
+        snapshot.memoryPressure == .critical || snapshot.cpuUsagePercent > 90
+    }
+
+    /// Short text shown next to the menu-bar icon. The format is driven by the user's
+    /// `menuBarMetricMode` preference:
+    ///  • `.auto`  → "CPU 85%" or "MEM 72%" depending on which percentage is currently higher
+    ///  • `.cpu`   → "85%"
+    ///  • `.ram`   → "72%"
+    ///  • `.both`  → "CPU 85%  MEM 72%"
+    ///  • `.none`  → "" (icon only)
     var menuBarText: String {
-        let prefs = PreferencesService.shared
-        let showCPU = prefs.showMenuBarCPU
-        let showRAM = prefs.showMenuBarRAM
-        let multi = showCPU && showRAM
-        var parts: [String] = []
-        if showCPU {
-            parts.append(multi
-                ? String(format: "CPU %.0f%%", snapshot.cpuUsagePercent)
-                : String(format: "%.0f%%", snapshot.cpuUsagePercent))
+        let mode = PreferencesService.shared.menuBarMetricMode
+        let cpu = snapshot.cpuUsagePercent
+        let ram = snapshot.memoryUsedPercent
+        switch mode {
+        case .none:
+            return ""
+        case .cpu:
+            return String(format: "%.0f%%", cpu)
+        case .ram:
+            return String(format: "%.0f%%", ram)
+        case .both:
+            return String(format: "CPU %.0f%%  MEM %.0f%%", cpu, ram)
+        case .auto:
+            // Show whichever metric is harder-loaded right now.
+            if ram >= cpu {
+                return String(format: "MEM %.0f%%", ram)
+            } else {
+                return String(format: "CPU %.0f%%", cpu)
+            }
         }
-        if showRAM {
-            parts.append(multi
-                ? String(format: "MEM %.0f%%", snapshot.memoryUsedPercent)
-                : String(format: "%.0f%%", snapshot.memoryUsedPercent))
-        }
-        return parts.joined(separator: "  ")
     }
 
     // MARK: - Lifecycle
@@ -132,17 +178,22 @@ final class PulseBarViewModel: ObservableObject {
     }
 
     func refresh(full: Bool = false) {
+        guard !isRefreshing else { return }
+        isRefreshing = true
         Task {
+            defer { self.isRefreshing = false }
             let cpu = self.metricsService.cpuUsagePercent()
             let memory = self.metricsService.memoryUsage()
             let battery = self.batteryService.read()
             let network = self.networkService.sampleRate()
+            self.storageService?.refreshDiskUsage()
 
             var running = self.processes
             if full {
-                running = await Task.detached {
+                let svc = processService  // capture on MainActor before crossing into detached task
+                running = await Task.detached { [svc] in
                     let portMap = ProcessSampling.allListeningPorts()
-                    return self.processService.runningProcesses(portMap: portMap)
+                    return svc.runningProcesses(portMap: portMap)
                 }.value
             }
 
@@ -170,8 +221,14 @@ final class PulseBarViewModel: ObservableObject {
             self.snapshot = newSnapshot
             if full {
                 self.processes = running
+                self.lastFullRefresh = .now
                 self.alerts = self.alertsService.evaluate(snapshot: newSnapshot, processes: running)
-                AppIconService.shared.prune(activePIDs: Set(running.map(\.pid)))
+                let activePIDs = Set(running.map(\.pid))
+                AppIconService.shared.prune(activePIDs: activePIDs)
+                ProcessSampling.prune(activePIDs: activePIDs)
+
+                // Evaluate Auto-Quit rules — only on full refresh so we have fresh CPU%/uptime data.
+                self.runAutoQuit(processes: running)
             } else {
                 // Even on cheap ticks, refresh the alert list so thresholds reflect live CPU/RAM.
                 self.alerts = self.alertsService.evaluate(snapshot: newSnapshot, processes: running)
@@ -223,7 +280,15 @@ final class PulseBarViewModel: ObservableObject {
         case .memory:
             sorted = base.sorted { $0.memoryBytes < $1.memoryBytes }
         case .uptime:
-            sorted = base.sorted { ($0.launchDate ?? .distantFuture) < ($1.launchDate ?? .distantFuture) }
+            // Sort by uptime (seconds since launch), not by launchDate. Ascending = shortest
+            // uptime first; descending = longest first. Rows without a launch date sink to the
+            // bottom in both directions via a sentinel of -1.
+            let now = Date()
+            sorted = base.sorted {
+                let lhs = $0.launchDate.map { now.timeIntervalSince($0) } ?? -1
+                let rhs = $1.launchDate.map { now.timeIntervalSince($0) } ?? -1
+                return lhs < rhs
+            }
         }
         return sortDirection == .ascending ? sorted : sorted.reversed()
     }
@@ -260,7 +325,10 @@ final class PulseBarViewModel: ObservableObject {
     // MARK: - Selection
     func toggleSelectMode() {
         isSelectMode.toggle()
-        if !isSelectMode { selectedProcessPIDs.removeAll() }
+        if !isSelectMode {
+            selectedProcessPIDs.removeAll()
+            lastSelectedPID = nil
+        }
     }
 
     func toggleSelection(_ pid: Int32) {
@@ -268,6 +336,27 @@ final class PulseBarViewModel: ObservableObject {
             selectedProcessPIDs.remove(pid)
         } else {
             selectedProcessPIDs.insert(pid)
+        }
+        lastSelectedPID = pid
+    }
+
+    /// Modifier-aware selection used by checkbox + row clicks.
+    /// - shift held → select contiguous range between `lastSelectedPID` and `pid` in the
+    ///   currently-visible filtered list. Useful for selecting batches of zombie processes.
+    /// - cmd held  → toggle just this row (same as default click).
+    /// - no mods   → toggle just this row.
+    func selectWithModifiers(pid: Int32, shift: Bool, command: Bool) {
+        let ordered = filteredProcesses.map(\.pid)
+        if shift, let anchor = lastSelectedPID,
+           let a = ordered.firstIndex(of: anchor),
+           let b = ordered.firstIndex(of: pid) {
+            let (lo, hi) = a <= b ? (a, b) : (b, a)
+            for p in ordered[lo...hi] { selectedProcessPIDs.insert(p) }
+            // Anchor stays put so the user can extend the selection further.
+        } else if command {
+            toggleSelection(pid)
+        } else {
+            toggleSelection(pid)
         }
     }
 
@@ -277,6 +366,7 @@ final class PulseBarViewModel: ObservableObject {
 
     func clearSelection() {
         selectedProcessPIDs.removeAll()
+        lastSelectedPID = nil
     }
 
     /// Force-kills all selected processes, then exits select mode.
@@ -317,5 +407,21 @@ final class PulseBarViewModel: ObservableObject {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(String(row.pid), forType: .string)
+    }
+
+    // MARK: - Auto-Quit
+
+    /// Runs the user's auto-quit rules. Called only on full refresh ticks so we have
+    /// fresh per-process CPU% samples.
+    private func runAutoQuit(processes: [ProcessRow]) {
+        let prefs = PreferencesService.shared
+        guard prefs.autoQuitEnabled else { return }
+        let rules = prefs.autoQuitRules
+        let fired = autoQuitService.evaluate(rules: rules, processes: processes)
+        guard !fired.isEmpty else { return }
+        autoQuitEvents = autoQuitService.recentEvents
+        if prefs.autoQuitNotify {
+            NotificationService.shared.postAutoQuit(events: fired)
+        }
     }
 }

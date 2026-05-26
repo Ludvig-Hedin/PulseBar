@@ -18,7 +18,9 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>LSApplicationCategoryType</key>
-	<string>public.app-category.utilities</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>PulseBar requests administrator privileges only when you confirm a cleanup that targets protected system caches. The escalation is one-shot per confirmation and never runs in the background.</string>
+	<key>LSUIElement</key>
+	<true/>
 </dict>
 </plist>

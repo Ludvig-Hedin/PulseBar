@@ -66,6 +66,14 @@ enum ProcessSampling {
         return min((cpuSeconds / elapsed) * 100.0, maxPercent)
     }
 
+    /// Drop cached CPU samples for PIDs that are no longer running. Without this the
+    /// sample dict grows unbounded over long-lived sessions as short-lived processes exit.
+    static func prune(activePIDs: Set<Int32>) {
+        samplesLock.lock()
+        cpuSamples = cpuSamples.filter { activePIDs.contains($0.key) }
+        samplesLock.unlock()
+    }
+
     /// Returns resident memory in bytes for `pid`.
     /// Returns nil if the process is inaccessible.
     static func memoryBytes(pid: Int32) -> UInt64? {
@@ -115,11 +123,19 @@ enum ProcessSampling {
 
     // MARK: - Shell helper
 
+    /// Hard upper bound on how long any single shell invocation may run.
+    /// `lsof` can stall on a stuck NFS mount or unresponsive filesystem; without this
+    /// watchdog the calling background thread would be pinned indefinitely and the
+    /// process tab's port info would silently stop updating.
+    private static let shellTimeout: TimeInterval = 5.0
+
     private static func runShell(_ command: String) -> String? {
         let task = Process()
         let pipe = Pipe()
-        task.launchPath = "/bin/zsh"
-        task.arguments = ["-lc", command]
+        // /bin/sh -c avoids loading login shell configs (.zprofile, NVM, conda, etc.)
+        // which can add 1-5s per invocation and blow the 5s watchdog on dev machines.
+        task.launchPath = "/bin/sh"
+        task.arguments = ["-c", command]
         task.standardOutput = pipe
         task.standardError = Pipe()
 
@@ -129,7 +145,20 @@ enum ProcessSampling {
             return nil
         }
 
+        // Watchdog: terminate the task if it overruns the timeout. We use a DispatchWorkItem
+        // so we can cancel it cleanly when the task exits in time.
+        let watchdog = DispatchWorkItem { [weak task] in
+            guard let task, task.isRunning else { return }
+            task.terminate()
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + shellTimeout, execute: watchdog)
+
         task.waitUntilExit()
+        watchdog.cancel()
+
+        // If the watchdog fired, exit status is non-zero — treat as no result.
+        guard task.terminationStatus == 0 else { return nil }
+
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8)
     }

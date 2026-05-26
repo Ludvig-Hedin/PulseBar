@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-final class ProcessService {
+final class ProcessService: @unchecked Sendable {
     private let detector = DevServerDetector()
 
     func runningProcesses(portMap: [Int32: [Int]]) -> [ProcessRow] {
