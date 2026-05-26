@@ -26,7 +26,7 @@ struct MetricCard: View {
                 }
             }
             Text(value)
-                .font(.system(size: 30, weight: .bold))
+                .font(.title.weight(.semibold))
                 .foregroundStyle(tint)
             if let p = progress {
                 ProgressView(value: max(0, min(1, p)))
