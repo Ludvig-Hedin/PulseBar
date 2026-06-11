@@ -88,13 +88,19 @@ enum PathAllowlist {
         if containsPathSeparatorEscape(resolved) { return false }
         if isProtected(resolved) { return false }
         if isPulseBarOwned(resolved) { return false }
-        return scanRoots.contains(where: { resolved.hasPrefix(normalize($0)) })
+        return scanRoots.contains(where: { isUnder(resolved, root: normalize($0)) })
     }
 
     /// Returns true if `url` is on the (narrower) admin-escalation allowlist.
     static func isAdminEscalationAllowed(_ url: URL) -> Bool {
         guard isScanAllowed(url), let resolved = resolvedPath(url) else { return false }
-        return adminEscalationRoots.contains(where: { resolved.hasPrefix(normalize($0)) })
+        return adminEscalationRoots.contains(where: { isUnder(resolved, root: normalize($0)) })
+    }
+
+    /// Directory-boundary-aware prefix check. Prevents `~/.cargo/registry-backup`
+    /// from matching the `~/.cargo/registry` allowlist entry.
+    private static func isUnder(_ path: String, root: String) -> Bool {
+        path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 
     /// Filename-level safety check used by the AppleScript escalation path.
