@@ -31,6 +31,9 @@ struct StorageSection: View {
                 case .dashboard:
                     StorageDashboardView()
                         .environmentObject(storageVM)
+                case .files:
+                    AllFilesView()
+                        .environmentObject(storageVM)
                 case .categories:
                     StorageCategoriesView()
                         .environmentObject(storageVM)
@@ -67,7 +70,7 @@ struct StorageSection: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(maxWidth: 460)
+        .frame(maxWidth: 600)
     }
 
     private func cleanupSummaryCard(_ summary: StorageViewModel.CleanupSummary) -> some View {

@@ -7,14 +7,16 @@ import Combine
 final class StorageViewModel: ObservableObject {
     enum Subview: String, CaseIterable, Identifiable {
         case dashboard = "Dashboard"
+        case files = "Files"
         case categories = "Categories"
         case settings = "Settings"
         var id: String { rawValue }
         var symbol: String {
             switch self {
-            case .dashboard: return "chart.pie"
+            case .dashboard:  return "chart.pie"
+            case .files:      return "list.bullet.rectangle"
             case .categories: return "tray.full"
-            case .settings: return "slider.horizontal.3"
+            case .settings:   return "slider.horizontal.3"
             }
         }
     }
@@ -141,6 +143,50 @@ final class StorageViewModel: ObservableObject {
     }
 
     func clearSelection() { selectedItems.removeAll() }
+
+    /// Select every cleanable item across all categories (reveal-only excluded).
+    func selectAllCleanable() {
+        for result in state.categoryResults.values {
+            guard !Self.isRevealOnly(result.category) else { continue }
+            for item in result.items { selectedItems.insert(item.url) }
+        }
+    }
+
+    /// Pre-select all junk then navigate to the Files view for quick review.
+    func quickSelectAllAndShowFiles() {
+        selectAllCleanable()
+        subview = .files
+    }
+
+    /// All cleanable items across every non-reveal-only category, sorted according
+    /// to the current `sortColumn` / `sortDirection`. Optionally filtered by text.
+    func allItemsSorted(searchText: String = "") -> [CleanableItem] {
+        var items: [CleanableItem] = []
+        for result in state.categoryResults.values {
+            guard !Self.isRevealOnly(result.category) else { continue }
+            items.append(contentsOf: result.items)
+        }
+        let filtered: [CleanableItem]
+        if searchText.isEmpty {
+            filtered = items
+        } else {
+            filtered = items.filter {
+                $0.displayName.localizedCaseInsensitiveContains(searchText)
+                    || $0.parentDirectory.localizedCaseInsensitiveContains(searchText)
+                    || $0.category.title.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+        let sorted: [CleanableItem]
+        switch sortColumn {
+        case .size:
+            sorted = filtered.sorted { $0.sizeBytes < $1.sizeBytes }
+        case .name:
+            sorted = filtered.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        case .modified:
+            sorted = filtered.sorted { $0.modifiedAt < $1.modifiedAt }
+        }
+        return sortDirection == .descending ? sorted.reversed() : sorted
+    }
 
     /// Items the user has selected across all categories. Used by the Clean flow.
     /// Reveal-only categories (Large Files, Purgeable, Docker synthetic) are

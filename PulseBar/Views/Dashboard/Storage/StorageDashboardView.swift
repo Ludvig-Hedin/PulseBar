@@ -44,7 +44,7 @@ struct StorageDashboardView: View {
                     Button {
                         storageVM.startSmartScan()
                     } label: {
-                        Label("Smart Scan", systemImage: "wand.and.stars")
+                        Label(storageVM.isScanRunning ? "Scanning…" : "Smart Scan", systemImage: "wand.and.stars")
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(storageVM.isScanRunning)
@@ -54,6 +54,18 @@ struct StorageDashboardView: View {
                             storageVM.cancelScan()
                         }
                         .buttonStyle(.bordered)
+                    }
+
+                    // CTA: only show when we have actionable junk from a completed scan
+                    if storageVM.state.totalJunkBytes > 0 && !storageVM.isScanRunning {
+                        Button {
+                            storageVM.quickSelectAllAndShowFiles()
+                        } label: {
+                            Label("Review & Clean \(ByteFormatting.gigabytes(storageVM.state.totalJunkBytes))",
+                                  systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.orange)
                     }
                 }
                 .padding(.top, 4)
