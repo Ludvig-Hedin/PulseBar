@@ -10,6 +10,10 @@ import Darwin
 private let PROC_PIDTASKINFO_FLAVOR: Int32 = 4
 
 enum ProcessSampling {
+    struct ProcessIdentity: Hashable {
+        let pid: Int32
+        let parentPID: Int32
+    }
 
     // MARK: - Mach timebase (cached — never changes at runtime)
 
@@ -74,14 +78,74 @@ enum ProcessSampling {
         samplesLock.unlock()
     }
 
-    /// Returns resident memory in bytes for `pid`.
+    /// Returns memory in bytes for `pid`.
+    /// Uses physical footprint first because it tracks Activity Monitor's Memory column
+    /// more closely than raw resident size. Falls back to resident size when footprint
+    /// is unavailable for a process.
     /// Returns nil if the process is inaccessible.
     static func memoryBytes(pid: Int32) -> UInt64? {
+        if let footprint = physicalFootprintBytes(pid: pid), footprint > 0 {
+            return footprint
+        }
+
         var ti = proc_taskinfo()
         let ret = proc_pidinfo(pid, PROC_PIDTASKINFO_FLAVOR, 0, &ti,
                                Int32(MemoryLayout<proc_taskinfo>.size))
         guard ret > 0 else { return nil }
         return ti.pti_resident_size
+    }
+
+    /// Snapshot PID/parent PID relationships for the whole system. This lets callers
+    /// aggregate helper and renderer processes under a regular app without parsing `ps`.
+    static func allProcessIdentities() -> [ProcessIdentity] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+        var length = 0
+
+        guard sysctl(&mib, u_int(mib.count), nil, &length, nil, 0) == 0 else {
+            return []
+        }
+
+        let stride = MemoryLayout<kinfo_proc>.stride
+        var attempts = 0
+
+        while attempts < 3 {
+            let requestedCount = max(length / stride, 1)
+            var processes = [kinfo_proc](repeating: kinfo_proc(), count: requestedCount)
+            let status = processes.withUnsafeMutableBufferPointer { buffer in
+                sysctl(&mib, u_int(mib.count), buffer.baseAddress, &length, nil, 0)
+            }
+
+            if status == 0 {
+                let actualCount = min(length / stride, processes.count)
+                return processes.prefix(actualCount).compactMap { process in
+                    let pid = process.kp_proc.p_pid
+                    guard pid > 0 else { return nil }
+                    return ProcessIdentity(pid: pid, parentPID: process.kp_eproc.e_ppid)
+                }
+            }
+
+            guard errno == ENOMEM else { return [] }
+            attempts += 1
+            length += stride * 64
+        }
+
+        return []
+    }
+
+    private static func physicalFootprintBytes(pid: Int32) -> UInt64? {
+        var usage = rusage_info_current()
+        let capacity = max(
+            1,
+            MemoryLayout<rusage_info_current>.stride / MemoryLayout<rusage_info_t?>.stride
+        )
+        let result = withUnsafeMutablePointer(to: &usage) { pointer in
+            pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: capacity) { rebound in
+                proc_pid_rusage(pid, RUSAGE_INFO_CURRENT, rebound)
+            }
+        }
+
+        guard result == 0 else { return nil }
+        return usage.ri_phys_footprint
     }
 
     // MARK: - Port scanning

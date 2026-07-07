@@ -14,7 +14,7 @@ A native macOS menu bar application for real-time system monitoring. Live CPU, m
 - **Memory pressure** — used/total RAM with warning thresholds
 - **Network throughput** — live upload/download rates
 - **Battery status** — charge level, charging state, and low-battery alerts
-- **Process monitor** — top processes by CPU/memory, with search and filtering
+- **Process monitor** — top processes by CPU/memory, with app helper processes aggregated
 - **Dev server detector** — heuristic detection of running dev servers (Vite, Next.js, etc.)
 - **Kill processes** — graceful or force-terminate any process directly from the UI
 - **Smart alerts** — threshold-based notifications (memory >90%, CPU ≥85%, battery ≤20%)
@@ -85,7 +85,7 @@ PulseBarApp (@main)
           ├─ Every 5s  → full refresh (processes, alerts)
           ├─ Services (stateless data fetchers)
           │   ├─ SystemMetricsService  — CPU % + memory (Darwin.Mach)
-          │   ├─ ProcessService        — process enumeration (NSWorkspace)
+          │   ├─ ProcessService        — process enumeration (NSWorkspace + kernel PID tree)
           │   ├─ NetworkService        — throughput (getifaddrs)
           │   ├─ BatteryService        — battery state (IOKit)
           │   ├─ AlertsService         — threshold evaluation
@@ -106,10 +106,14 @@ Views
 | `App/AppState.swift` | ViewModel init, EnvironmentObject root |
 | `ViewModels/PulseBarViewModel.swift` | Refresh loop, filtering, sorting, kill confirmation |
 | `Models/SystemSnapshot.swift` | System-wide metrics snapshot struct |
-| `Models/ProcessRow.swift` | Per-process data + classification |
+| `Models/ProcessRow.swift` | Process/app row data, classification, and sampled PID membership |
 | `Services/DevServerDetector.swift` | Dev server heuristics |
-| `Utilities/ProcessSampling.swift` | Per-process CPU/memory + port enumeration |
+| `Utilities/ProcessSampling.swift` | Per-process CPU/physical-footprint memory, PID tree, and port enumeration |
 | `Utilities/MachHelpers.swift` | Mach API usage notes |
+
+### Process memory reliability
+
+PulseBar reports per-PID memory using `proc_pid_rusage(...).ri_phys_footprint`, falling back to `proc_taskinfo.pti_resident_size` only when footprint data is unavailable. Regular application rows aggregate the app's main PID plus recursive child/helper PIDs from a kernel `sysctl(KERN_PROC_ALL)` snapshot. This makes Electron, Chromium, terminal multiplexer, and helper-heavy apps line up much more closely with macOS Force Quit and Activity Monitor app totals.
 
 ---
 

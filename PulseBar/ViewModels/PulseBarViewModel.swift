@@ -223,7 +223,7 @@ final class PulseBarViewModel: ObservableObject {
                 self.processes = running
                 self.lastFullRefresh = .now
                 self.alerts = self.alertsService.evaluate(snapshot: newSnapshot, processes: running)
-                let activePIDs = Set(running.map(\.pid))
+                let activePIDs = Set(running.flatMap(\.sampledPIDs))
                 AppIconService.shared.prune(activePIDs: activePIDs)
                 ProcessSampling.prune(activePIDs: activePIDs)
 

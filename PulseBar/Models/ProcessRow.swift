@@ -10,6 +10,8 @@ struct ProcessRow: Identifiable, Hashable {
 
     let cpuPercent: Double
     let memoryBytes: UInt64
+    /// PIDs sampled for this row. App rows include recursive helpers; CLI/background rows do not.
+    let sampledPIDs: [Int32]
 
     let kind: Kind
     let isFrontmost: Bool
