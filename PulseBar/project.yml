@@ -13,14 +13,18 @@ targets:
       - path: Utilities
       - path: ViewModels
       - path: Views
+      - path: Assets.xcassets
     info:
       path: Info.plist
       properties:
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
+        LSUIElement: true
+        NSAppleEventsUsageDescription: "PulseBar requests administrator privileges only when you confirm a cleanup that targets protected system caches. The escalation is one-shot per confirmation and never runs in the background."
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: PulseBar.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

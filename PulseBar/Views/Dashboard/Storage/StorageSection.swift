@@ -60,6 +60,13 @@ struct StorageSection: View {
                 onClean: { mode in storageVM.performCleanup(mode: mode) }
             )
         }
+        .sheet(isPresented: $storageVM.showDockerPruneConfirmation) {
+            DockerPruneConfirmationDialog(
+                reclaimableBytes: storageVM.dockerReclaimableBytes,
+                onCancel: { storageVM.cancelDockerPruneConfirmation() },
+                onPrune: { storageVM.performDockerPrune() }
+            )
+        }
     }
 
     private var subviewPicker: some View {
@@ -79,15 +86,15 @@ struct StorageSection: View {
                 .font(.title2)
                 .foregroundStyle(.green)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Reclaimed \(summary.totalFormatted)")
+                Text(summary.kind == .docker ? "Docker reclaimed \(summary.totalFormatted)" : "Reclaimed \(summary.totalFormatted)")
                     .font(.body.weight(.semibold))
-                Text("\(summary.succeeded) deleted · \(summary.failed) failed · \(summary.refused) refused")
+                Text(summaryDetail(summary))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             // Trash-mode cleanups are recoverable — make finding them one click away.
-            if summary.succeeded > 0 {
+            if summary.kind == .files && summary.succeeded > 0 {
                 Button {
                     let trash = FileManager.default.homeDirectoryForCurrentUser
                         .appendingPathComponent(".Trash", isDirectory: true)
@@ -124,4 +131,52 @@ struct StorageSection: View {
         }
     }
 
+    private func summaryDetail(_ summary: StorageViewModel.CleanupSummary) -> String {
+        switch summary.kind {
+        case .files:
+            return "\(summary.succeeded) deleted · \(summary.failed) failed · \(summary.refused) refused"
+        case .docker:
+            return "\(summary.succeeded) prune completed · \(summary.failed) failed · \(summary.refused) refused"
+        }
+    }
+
+}
+
+private struct DockerPruneConfirmationDialog: View {
+    let reclaimableBytes: UInt64
+    let onCancel: () -> Void
+    let onPrune: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Image(systemName: "cube.box")
+                    .font(.title)
+                    .foregroundStyle(.cyan)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Prune Docker \(ByteFormatting.memory(reclaimableBytes))?")
+                        .font(.title2.weight(.semibold))
+                    Text("Removes stopped containers, unused networks, dangling images, and build cache. Docker volumes are not removed.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button {
+                    onPrune()
+                } label: {
+                    Text("Prune Docker")
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 500)
+    }
 }

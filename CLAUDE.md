@@ -105,6 +105,47 @@ Views
 
 ---
 
+## Storage / Cleaning subsystem
+
+The Storage tab (sidebar group "STORAGE") is an actor-based scanner derived from
+PureMac (MIT — see `THIRD_PARTY_LICENSES.md`). Key files:
+
+- `Models/StorageCategory.swift` — source of truth for the 12 categories.
+  Adding a category = new case + paths in `Locations.swift` + switch arm in
+  `CategoryScanner.swift`.
+- `Services/Cleaner/Locations.swift` — hardcoded path database.
+- `Services/Cleaner/PathAllowlist.swift` — gates scans **and** admin escalation.
+  Every deletion path must pass `isScanAllowed`; admin paths must additionally
+  pass `isAdminEscalationAllowed`.
+- `Services/Cleaner/ScanEngine.swift` — actor; scans on `Task.detached`; yields
+  progress via `AsyncStream<ScanProgressEvent>`.
+- `Services/Cleaner/CleanupService.swift` — actor; trash / permanent / admin
+  modes. AppleScript escalation lives here (not in `CommandRunner`).
+- `Services/Cleaner/FullDiskAccessDetector.swift` — probes TCC paths; memoised 30s.
+- `Services/StorageService.swift` — `@MainActor` orchestrator + `@Published`
+  state. Disk-usage probe runs every `PulseBarViewModel.refresh()` tick.
+
+Safety guardrails:
+- Trash-first by default; permanent + admin opt-in per cleanup.
+- Symlink resolution + path re-stat (TOCTOU) immediately before delete.
+- 10k file cap and 30s deadline per category scan.
+- `CommandRunner` never spawns a shell; `[String]` args only.
+- AppleScript shell-quoting validated against a banned-character list; max 50
+  paths per batch; fixed reason string.
+- Storage category actionability is explicit: normal cache/log/dev-artifact
+  categories are selectable, Large Files is reveal-only, Purgeable is
+  informational, and Docker is an external `docker system prune -f` action.
+  Do not route Docker/Purgeable/Large Files through the normal file deletion
+  flow.
+- Docker prune intentionally omits `--volumes`; volume deletion requires a
+  separate product decision and stronger confirmation copy.
+
+**Sandbox:** `PulseBar.entitlements` sets `com.apple.security.app-sandbox=false`.
+Required for both the existing process inspection (`task_for_pid`, `lsof`) and
+the new full-filesystem scans. Do not re-enable.
+
+---
+
 ## Naming Conventions (Swift)
 
 - PascalCase: types, structs, enums, views

@@ -138,6 +138,32 @@ actor CleanupService {
         return records
     }
 
+    func pruneDocker(estimatedBytes: UInt64) -> [DeletionRecord] {
+        let url = URL(fileURLWithPath: "/docker-system-prune")
+        let result: DeletionRecord.DeletionResult
+        let recordedBytes: UInt64
+
+        switch DockerProbe.prune(estimatedBytes: estimatedBytes) {
+        case .succeeded(let reclaimedBytes):
+            result = .succeeded
+            recordedBytes = reclaimedBytes
+        case .failed(let message):
+            result = .failed(message)
+            recordedBytes = 0
+        case .unavailable(let message):
+            result = .refused(message)
+            recordedBytes = 0
+        }
+
+        return [
+            DeletionRecord(url: url,
+                           sizeBytes: recordedBytes,
+                           category: .docker,
+                           mode: .permanent,
+                           result: result)
+        ]
+    }
+
     // MARK: - Per-mode primitives
 
     private func performTrash(item: CleanableItem, resolved: URL) -> DeletionRecord {

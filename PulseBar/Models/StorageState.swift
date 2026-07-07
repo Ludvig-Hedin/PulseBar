@@ -10,12 +10,17 @@ struct StorageState: Equatable {
     var fullDiskAccessGranted: Bool? = nil
 
     /// Sum of all freshly-scanned, *deletable* category sizes. Purgeable space is
-    /// reclaimed by macOS and Docker space requires `docker system prune` — neither
-    /// is something PulseBar deletes via the Clean flow, so excluding both keeps
-    /// "Junk found" honest about what a Smart Scan + Clean will reclaim.
+    /// reclaimed by macOS, Docker requires `docker system prune`, and Large Files
+    /// is reveal-only user data; excluding them keeps "Junk found" honest about
+    /// what a Smart Scan + Clean will reclaim.
     var totalJunkBytes: UInt64 {
         categoryResults.values
-            .filter { $0.isFresh && $0.category != .purgeableSpace && $0.category != .docker }
+            .filter {
+                $0.isFresh
+                    && $0.category != .purgeableSpace
+                    && $0.category != .docker
+                    && $0.category != .largeFiles
+            }
             .reduce(0) { $0 + $1.totalSizeBytes }
     }
 

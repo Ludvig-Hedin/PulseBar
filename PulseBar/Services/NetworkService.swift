@@ -28,7 +28,10 @@ final class NetworkService {
             return NetworkRate(downloadBytesPerSecond: 0, uploadBytesPerSecond: 0)
         }
 
-        let delta = max(now.timeIntervalSince(previousDate), 1)
+        // Small epsilon avoids divide-by-zero on near-simultaneous samples without
+        // capping the effective sample rate at 1 Hz (which halved the reported
+        // throughput at fast refresh intervals).
+        let delta = max(now.timeIntervalSince(previousDate), 0.05)
         let down = current.inputBytes >= previousCounters.inputBytes ? current.inputBytes - previousCounters.inputBytes : 0
         let up = current.outputBytes >= previousCounters.outputBytes ? current.outputBytes - previousCounters.outputBytes : 0
 

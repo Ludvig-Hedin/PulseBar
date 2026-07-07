@@ -50,7 +50,7 @@ enum StorageCategory: String, CaseIterable, Identifiable, Codable, Hashable {
         case .xcodeJunk:      return "DerivedData, Archives, simulators, device support"
         case .brewCache:      return "Downloaded bottles and casks"
         case .nodeCache:      return "Package caches for npm, yarn, and pnpm"
-        case .docker:         return "Reclaimable images, containers, and volumes"
+        case .docker:         return "Unused images, containers, networks, and build cache"
         case .purgeableSpace: return "Snapshots macOS can reclaim automatically"
         case .smartScan:      return "Scan all curated categories sequentially"
         }

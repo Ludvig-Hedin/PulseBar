@@ -70,9 +70,6 @@ struct CategoryDetailView: View {
             }
             Spacer()
             Button {
-                // `.sheet(item:)` clears `selectedCategory` when this view tears down,
-                // so we only need to dismiss. Setting selectedCategory to nil here
-                // would race with the framework's own write.
                 dismiss()
             } label: {
                 Image(systemName: "xmark.circle.fill")
@@ -88,7 +85,7 @@ struct CategoryDetailView: View {
         VStack(spacing: 0) {
             // Reveal-only context appears BEFORE the toolbar so the user knows the
             // selection controls below are intentionally absent.
-            if StorageViewModel.isRevealOnly(category) {
+            if !StorageViewModel.isCleanable(category) {
                 revealOnlyBanner
                     .padding(.top, 12)
             }
@@ -130,7 +127,7 @@ struct CategoryDetailView: View {
                 .buttonStyle(.bordered)
                 .help(storageVM.sortDirection == .descending ? "Largest first — click to reverse" : "Smallest first — click to reverse")
 
-                if !StorageViewModel.isRevealOnly(category) {
+                if StorageViewModel.isCleanable(category) {
                     Button("Select All") { storageVM.selectAll(in: category) }
                         .buttonStyle(.bordered)
                     Button("Deselect All") { storageVM.deselectAll(in: category) }
@@ -148,7 +145,7 @@ struct CategoryDetailView: View {
                         CleanableItemRow(
                             item: item,
                             isSelected: storageVM.selectedItems.contains(item.url),
-                            isSelectable: !StorageViewModel.isRevealOnly(category),
+                            isSelectable: StorageViewModel.isCleanable(category),
                             toggle: { storageVM.toggleSelection(item.url) }
                         )
                     }
@@ -234,7 +231,7 @@ struct CategoryDetailView: View {
         let result = storageVM.state.categoryResults[category]
         let selected = result?.items.filter { storageVM.selectedItems.contains($0.url) } ?? []
         let selectedBytes = selected.reduce(UInt64(0)) { $0 + $1.sizeBytes }
-        let isRevealOnly = StorageViewModel.isRevealOnly(category)
+        let isCleanable = StorageViewModel.isCleanable(category)
         return HStack(spacing: 12) {
             if let result {
                 VStack(alignment: .leading, spacing: 2) {
@@ -254,7 +251,7 @@ struct CategoryDetailView: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
 
-                if !isRevealOnly {
+                if isCleanable {
                     Button {
                         storageVM.requestCleanup()
                     } label: {

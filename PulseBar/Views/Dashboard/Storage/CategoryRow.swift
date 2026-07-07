@@ -8,6 +8,7 @@ struct CategoryRow: View {
     let runningBytes: UInt64?
     let runningCount: Int?
     let needsFullDiskAccess: Bool
+    let actionKind: StorageViewModel.CategoryActionKind
     let onTap: () -> Void
     let onSelectAll: () -> Void
     let onDeselectAll: () -> Void
@@ -64,7 +65,7 @@ struct CategoryRow: View {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
-                    .help("Open details")
+                    .help("Review \(category.title)")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -74,7 +75,7 @@ struct CategoryRow: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            if totalCount > 0 {
+            if actionKind == .cleanable && totalCount > 0 {
                 Button("Select All", action: onSelectAll)
                 Button("Deselect All", action: onDeselectAll)
             }
@@ -86,11 +87,27 @@ struct CategoryRow: View {
         if let result, result.errors.contains(where: { $0.reason == .permissionDenied }) {
             return "Full Disk Access required for some paths"
         }
+        if category == .docker, let result, result.errors.isEmpty == false {
+            return "Docker CLI unavailable or daemon not running"
+        }
+        switch actionKind {
+        case .cleanable:
+            break
+        case .revealOnly:
+            return "Review in Finder before deleting manually"
+        case .externalAction:
+            return "Prune unused Docker data explicitly"
+        case .informational:
+            return "Managed automatically by macOS"
+        }
         return category.subtitle
     }
 
     private var sizeText: String {
         if let result {
+            if category == .docker && result.totalSizeBytes == 0 && result.errors.isEmpty == false {
+                return "—"
+            }
             return result.totalFormatted
         }
         if let running = runningBytes {
@@ -102,8 +119,20 @@ struct CategoryRow: View {
     private var itemCountText: String {
         if let count = runningCount, isScanning { return "\(count) items" }
         guard let result else { return "" }
-        if result.itemCount == 0 { return "Nothing to clean" }
-        if selectedCount > 0 { return "\(selectedCount) of \(result.itemCount) selected" }
-        return "\(result.itemCount) items"
+        switch actionKind {
+        case .cleanable:
+            if result.itemCount == 0 { return "Nothing to clean" }
+            if selectedCount > 0 { return "\(selectedCount) of \(result.itemCount) selected" }
+            return "\(result.itemCount) cleanable"
+        case .revealOnly:
+            if result.itemCount == 0 { return "No large files" }
+            return "\(result.itemCount) to review"
+        case .externalAction:
+            if result.totalSizeBytes > 0 { return "Prune available" }
+            if result.errors.isEmpty == false { return "Docker not running" }
+            return "No prune needed"
+        case .informational:
+            return category == .purgeableSpace ? "Managed by macOS" : "Info only"
+        }
     }
 }

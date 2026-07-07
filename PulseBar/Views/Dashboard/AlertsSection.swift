@@ -1,7 +1,11 @@
 import SwiftUI
 
 struct AlertsSection: View {
+    @EnvironmentObject private var vm: PulseBarViewModel
     let alerts: [AlertItem]
+    /// Optional deep-link — when provided, alert cards show a CTA that navigates
+    /// to the Processes tab (caller decides what that means).
+    var onShowProcesses: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -21,11 +25,12 @@ struct AlertsSection: View {
             }
 
             if alerts.isEmpty {
-                EmptyStateView(title: "No active alerts", subtitle: "Your Mac is behaving. Miracles happen.")
+                EmptyStateView(title: "All clear", subtitle: "No alerts in the last few minutes.")
             } else {
                 VStack(spacing: 10) {
                     ForEach(alerts) { alert in
-                        AlertCard(alert: alert)
+                        AlertCard(alert: alert, onShowProcesses: onShowProcesses)
+                            .environmentObject(vm)
                     }
                 }
             }
@@ -34,22 +39,42 @@ struct AlertsSection: View {
 }
 
 private struct AlertCard: View {
+    @EnvironmentObject private var vm: PulseBarViewModel
     let alert: AlertItem
+    let onShowProcesses: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.title3)
                 .foregroundStyle(color)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(alert.title).font(.headline)
                 Text(alert.subtitle).foregroundStyle(.secondary)
-                // Actionable hint — the #1 ask of any "Activity Monitor replacement".
-                if let hint = Self.suggestion(for: alert) {
+
+                if let hint = suggestion(for: alert) {
                     Label(hint, systemImage: "lightbulb")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.top, 2)
+                }
+
+                // Inline CTA — actionable alerts (CPU/RAM) get a "View processes" button.
+                if let cta = ctaLabel, let onShowProcesses {
+                    Button(cta) {
+                        // Pre-filter Processes to the most useful subset for this alert.
+                        if alert.title.lowercased().contains("ram")
+                            || alert.title.lowercased().contains("memory")
+                            || alert.title.lowercased().contains("cpu") {
+                            vm.filter = .heavy
+                            vm.sortColumn = alert.title.lowercased().contains("cpu") ? .cpu : .memory
+                            vm.sortDirection = .descending
+                        }
+                        onShowProcesses()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .padding(.top, 4)
                 }
             }
             Spacer()
@@ -78,9 +103,16 @@ private struct AlertCard: View {
         }
     }
 
-    private static func suggestion(for alert: AlertItem) -> String? {
+    private var ctaLabel: String? {
         let t = alert.title.lowercased()
-        if t.contains("cpu") { return "Switch to the Processes tab and quit the top offender." }
+        if t.contains("cpu") { return "Show top CPU offenders" }
+        if t.contains("ram") || t.contains("memory") { return "Show top memory offenders" }
+        return nil
+    }
+
+    private func suggestion(for alert: AlertItem) -> String? {
+        let t = alert.title.lowercased()
+        if t.contains("cpu") { return "Quit the heaviest process to bring usage down." }
         if t.contains("ram") || t.contains("memory") { return "Quit apps you aren't using, or restart heavy dev servers." }
         if t.contains("battery") { return "Plug in, or close battery-hungry apps like browsers." }
         return nil

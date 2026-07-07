@@ -11,6 +11,12 @@ enum DockerProbe {
         let volumeCount: Int
     }
 
+    enum PruneResult {
+        case succeeded(reclaimedBytes: UInt64)
+        case failed(String)
+        case unavailable(String)
+    }
+
     /// Runs `docker system df --format '{{json .}}'`. Returns `nil` if Docker isn't
     /// installed, the daemon isn't running, or output couldn't be parsed.
     static func read() -> Report? {
@@ -58,6 +64,32 @@ enum DockerProbe {
             containerCount: containers,
             volumeCount: volumes
         )
+    }
+
+    /// Runs the safe default Docker prune. Volumes are intentionally not removed.
+    static func prune(estimatedBytes: UInt64) -> PruneResult {
+        let candidates = Locations.cliCandidates(for: .docker)
+        guard let binary = CommandRunner.resolveBinary(candidates) else {
+            return .unavailable("Docker CLI not found")
+        }
+
+        do {
+            let output = try CommandRunner.run(
+                launchPath: binary,
+                arguments: ["system", "prune", "-f"],
+                timeout: 60
+            )
+            guard output.exitCode == 0 else {
+                let message = output.stderr.isEmpty ? "docker system prune exited \(output.exitCode)" : output.stderr
+                return .failed(message)
+            }
+
+            let remaining = read()?.reclaimableBytes ?? 0
+            let reclaimed = remaining <= estimatedBytes ? estimatedBytes - remaining : 0
+            return .succeeded(reclaimedBytes: reclaimed)
+        } catch {
+            return .failed(String(describing: error))
+        }
     }
 
     /// Parses values like `"1.234GB (45%)"`, `"512MB"`, `"0B"` into bytes.

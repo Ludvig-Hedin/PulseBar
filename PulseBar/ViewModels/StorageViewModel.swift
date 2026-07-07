@@ -30,6 +30,13 @@ final class StorageViewModel: ObservableObject {
 
     enum SortDirection { case ascending, descending }
 
+    enum CategoryActionKind: Equatable {
+        case cleanable
+        case revealOnly
+        case externalAction
+        case informational
+    }
+
     let service: StorageService
 
     /// Republished so views can observe `StorageViewModel` alone.
@@ -42,7 +49,7 @@ final class StorageViewModel: ObservableObject {
     /// Dashboard is informational; defaulting there makes users hunt for the cleanup
     /// flow. First-time users land on the action, not on a hero gauge with empty stats.
     @Published var subview: Subview = .categories
-    @Published var selectedCategory: StorageCategory?
+    @Published var fileCategoryFilter: StorageCategory?
     @Published var searchText: String = ""
     @Published var sortColumn: SortColumn = .size
     @Published var sortDirection: SortDirection = .descending
@@ -55,8 +62,16 @@ final class StorageViewModel: ObservableObject {
     /// True while a cleanup is in flight. Drives the StickyCleanBar's spinner and
     /// gates a second cleanup invocation.
     @Published private(set) var isCleaning: Bool = false
+    @Published var showDockerPruneConfirmation: Bool = false
+    @Published private(set) var isPruningDocker: Bool = false
 
     struct CleanupSummary: Equatable {
+        enum Kind: Equatable {
+            case files
+            case docker
+        }
+
+        let kind: Kind
         let succeeded: Int
         let failed: Int
         let refused: Int
@@ -98,6 +113,12 @@ final class StorageViewModel: ObservableObject {
 
     var isScanRunning: Bool { state.scanProgress != nil }
 
+    func showFiles(category: StorageCategory? = nil) {
+        fileCategoryFilter = category
+        searchText = ""
+        subview = .files
+    }
+
     // MARK: - Junk summary (Overview callout)
 
     struct JunkSummary {
@@ -128,9 +149,8 @@ final class StorageViewModel: ObservableObject {
 
     func selectAll(in category: StorageCategory) {
         // Respect the active search filter so "Select All" matches what the user sees.
-        // Reveal-only categories can't be cleaned anyway; selection in those is a no-op
-        // gated by `selectedCleanables`.
-        guard !Self.isRevealOnly(category) else { return }
+        // Non-cleanable categories cannot be selected for the normal file cleaner.
+        guard Self.isCleanable(category) else { return }
         for item in filteredItems(for: category) {
             selectedItems.insert(item.url)
         }
@@ -144,27 +164,50 @@ final class StorageViewModel: ObservableObject {
 
     func clearSelection() { selectedItems.removeAll() }
 
-    /// Select every cleanable item across all categories (reveal-only excluded).
-    func selectAllCleanable() {
-        for result in state.categoryResults.values {
-            guard !Self.isRevealOnly(result.category) else { continue }
-            for item in result.items { selectedItems.insert(item.url) }
+    /// Select every visible cleanable item across all categories by default, or
+    /// within a specific review filter when the Files view is scoped.
+    func selectAllCleanable(category: StorageCategory? = nil, searchText: String = "") {
+        for item in allItemsSorted(category: category, searchText: searchText) {
+            if Self.isCleanable(item.category) {
+                selectedItems.insert(item.url)
+            }
         }
     }
 
     /// Pre-select all junk then navigate to the Files view for quick review.
     func quickSelectAllAndShowFiles() {
         selectAllCleanable()
-        subview = .files
+        showFiles()
+    }
+
+    func selectAllVisibleReviewItems() {
+        selectAllCleanable(category: fileCategoryFilter, searchText: searchText)
+    }
+
+    func deselectAllVisibleReviewItems() {
+        for item in allItemsSorted(category: fileCategoryFilter,
+                                   searchText: searchText,
+                                   includeRevealOnly: true) {
+            selectedItems.remove(item.url)
+        }
     }
 
     /// All cleanable items across every non-reveal-only category, sorted according
     /// to the current `sortColumn` / `sortDirection`. Optionally filtered by text.
-    func allItemsSorted(searchText: String = "") -> [CleanableItem] {
+    func allItemsSorted(category: StorageCategory? = nil,
+                        searchText: String = "",
+                        includeRevealOnly: Bool = false) -> [CleanableItem] {
         var items: [CleanableItem] = []
-        for result in state.categoryResults.values {
-            guard !Self.isRevealOnly(result.category) else { continue }
-            items.append(contentsOf: result.items)
+        if let category {
+            if let result = state.categoryResults[category],
+               Self.isCleanable(category) || includeRevealOnly {
+                items.append(contentsOf: result.items)
+            }
+        } else {
+            for result in state.categoryResults.values {
+                guard Self.isCleanable(result.category) else { continue }
+                items.append(contentsOf: result.items)
+            }
         }
         let filtered: [CleanableItem]
         if searchText.isEmpty {
@@ -196,20 +239,25 @@ final class StorageViewModel: ObservableObject {
         var out: [CleanableItem] = []
         for result in state.categoryResults.values {
             for item in result.items where selectedItems.contains(item.url) {
-                if Self.isRevealOnly(item.category) { continue }
+                if !Self.isCleanable(item.category) { continue }
                 out.append(item)
             }
         }
         return out
     }
 
-    /// True for categories where items are display-only — the cleaner refuses to
-    /// touch them via the normal Clean flow.
-    static func isRevealOnly(_ category: StorageCategory) -> Bool {
+    static func actionKind(for category: StorageCategory) -> CategoryActionKind {
         switch category {
-        case .largeFiles, .purgeableSpace, .docker: return true
-        default: return false
+        case .largeFiles:     return .revealOnly
+        case .docker:         return .externalAction
+        case .purgeableSpace: return .informational
+        default:              return .cleanable
         }
+    }
+
+    /// True when the regular file cleaner may select and remove files in a category.
+    static func isCleanable(_ category: StorageCategory) -> Bool {
+        actionKind(for: category) == .cleanable
     }
 
     var selectedTotalBytes: UInt64 {
@@ -263,6 +311,7 @@ final class StorageViewModel: ObservableObject {
             let refused = records.filter { if case .refused = $0.result { return true } else { return false } }
             let bytes = succeeded.reduce(UInt64(0)) { $0 + $1.sizeBytes }
             self.lastCleanupSummary = CleanupSummary(
+                kind: .files,
                 succeeded: succeeded.count,
                 failed: failed.count,
                 refused: refused.count,
@@ -276,6 +325,44 @@ final class StorageViewModel: ObservableObject {
 
     func cancelCleanupConfirmation() {
         showCleanConfirmation = false
+    }
+
+    // MARK: - Docker
+
+    var dockerReclaimableBytes: UInt64 {
+        state.categoryResults[.docker]?.totalSizeBytes ?? 0
+    }
+
+    func requestDockerPrune() {
+        guard dockerReclaimableBytes > 0, !isPruningDocker else { return }
+        showDockerPruneConfirmation = true
+    }
+
+    func cancelDockerPruneConfirmation() {
+        showDockerPruneConfirmation = false
+    }
+
+    func performDockerPrune() {
+        let estimatedBytes = dockerReclaimableBytes
+        showDockerPruneConfirmation = false
+        guard estimatedBytes > 0, !isPruningDocker else { return }
+        isPruningDocker = true
+        Task {
+            let records = await service.pruneDocker(estimatedBytes: estimatedBytes)
+            let succeeded = records.filter { if case .succeeded = $0.result { return true } else { return false } }
+            let failed = records.filter { if case .failed = $0.result { return true } else { return false } }
+            let refused = records.filter { if case .refused = $0.result { return true } else { return false } }
+            let bytes = succeeded.reduce(UInt64(0)) { $0 + $1.sizeBytes }
+            self.lastCleanupSummary = CleanupSummary(
+                kind: .docker,
+                succeeded: succeeded.count,
+                failed: failed.count,
+                refused: refused.count,
+                totalBytes: bytes,
+                completedAt: .now
+            )
+            self.isPruningDocker = false
+        }
     }
 
     // MARK: - Full Disk Access

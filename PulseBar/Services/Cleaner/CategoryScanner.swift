@@ -201,6 +201,7 @@ enum CategoryScanner {
         var total: UInt64 = 0
         var errors: [ScanError] = []
         var truncated = false
+        var scannedRoots = Set<String>()
 
         let tools: [(name: String, candidates: [String], args: [String])] = [
             ("npm", ["/opt/homebrew/bin/npm", "/usr/local/bin/npm"], ["config", "get", "cache"]),
@@ -208,13 +209,12 @@ enum CategoryScanner {
             ("pnpm", ["/opt/homebrew/bin/pnpm", "/usr/local/bin/pnpm"], ["store", "path"]),
         ]
 
-        for tool in tools {
-            if cancellation() { break }
-            guard let bin = CommandRunner.resolveBinary(tool.candidates) else { continue }
-            guard let output = try? CommandRunner.run(launchPath: bin, arguments: tool.args, timeout: 3),
-                  output.exitCode == 0 else { continue }
-            let url = URL(fileURLWithPath: output.trimmedStdout, isDirectory: true)
-            guard PathAllowlist.isScanAllowed(url) else { continue }
+        func appendScan(root: URL) {
+            guard !cancellation() else { return }
+            let url = root.resolvingSymlinksInPath().standardizedFileURL
+            guard scannedRoots.insert(url.path).inserted else { return }
+            guard PathAllowlist.isScanAllowed(url) else { return }
+
             let result = FileEnumerator.enumerate(
                 root: url,
                 category: .nodeCache,
@@ -228,6 +228,19 @@ enum CategoryScanner {
             total &+= result.totalSizeBytes
             truncated = truncated || result.truncated
             errors.append(contentsOf: result.errors)
+        }
+
+        for tool in tools {
+            if cancellation() { break }
+            guard let bin = CommandRunner.resolveBinary(tool.candidates) else { continue }
+            guard let output = try? CommandRunner.run(launchPath: bin, arguments: tool.args, timeout: 3),
+                  output.exitCode == 0 else { continue }
+            appendScan(root: URL(fileURLWithPath: output.trimmedStdout, isDirectory: true))
+        }
+
+        for root in Locations.staticPaths(for: .nodeCache) {
+            if cancellation() { break }
+            appendScan(root: root)
         }
 
         return CategoryResult(category: .nodeCache,
@@ -244,17 +257,13 @@ enum CategoryScanner {
     /// `docker system df`. Cleanup uses `docker system prune` rather than
     /// FileManager deletion.
     private static func scanDocker() -> CategoryResult {
-        guard let report = DockerProbe.read() else { return emptyResult(.docker) }
-        // Synthetic single-item placeholder so the UI has something to render.
-        let synthetic = CleanableItem(
-            url: URL(fileURLWithPath: "/dev/null"),
-            sizeBytes: report.reclaimableBytes,
-            modifiedAt: .now,
-            isDirectory: false,
-            category: .docker
-        )
+        guard let report = DockerProbe.read() else {
+            return emptyResult(.docker, errors: [
+                ScanError(path: "docker", reason: .ioError("Docker CLI is unavailable or the daemon is not running"))
+            ])
+        }
         return CategoryResult(category: .docker,
-                              items: report.reclaimableBytes > 0 ? [synthetic] : [],
+                              items: [],
                               totalSizeBytes: report.reclaimableBytes,
                               scannedAt: .now,
                               truncated: false,

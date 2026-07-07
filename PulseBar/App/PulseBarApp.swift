@@ -11,6 +11,7 @@ struct PulseBarApp: App {
             MenuBarRootView()
                 .environmentObject(appState)
                 .environmentObject(appState.viewModel)
+                .environmentObject(appState.storageViewModel)
                 .frame(width: 380)
         } label: {
             MenuBarLabel(viewModel: appState.viewModel)
@@ -21,6 +22,7 @@ struct PulseBarApp: App {
             MainDashboardView()
                 .environmentObject(appState)
                 .environmentObject(appState.viewModel)
+                .environmentObject(appState.storageViewModel)
                 .frame(minWidth: 1080, minHeight: 760)
                 // When the main window appears/disappears, tell the VM so it can
                 // speed up or throttle down its polling cadence.
@@ -32,6 +34,12 @@ struct PulseBarApp: App {
         .onChange(of: scenePhase) { _, newPhase in
             // Pause heavy polling when the whole app is inactive / in the background.
             appState.viewModel.isInBackground = (newPhase != .active)
+            // Re-probe Full Disk Access when the app foregrounds so a permission
+            // granted in System Settings while we were inactive is picked up
+            // immediately instead of waiting for the 30 s detector cache.
+            if newPhase == .active {
+                appState.storageViewModel.recheckFullDiskAccess()
+            }
         }
 
         // Separate Settings scene — invokable via ⌘, and the menu-bar dropdown.
@@ -60,5 +68,6 @@ private struct MenuBarLabel: View {
                     .monospacedDigit()
             }
         }
+        .foregroundStyle(viewModel.isCritical ? Color.red : Color.primary)
     }
 }

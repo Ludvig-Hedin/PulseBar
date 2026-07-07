@@ -12,6 +12,13 @@ struct SearchBar: View {
 
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)
+                .onKeyPress(.escape) {
+                    if !text.isEmpty {
+                        text = ""
+                        return .handled
+                    }
+                    return .ignored
+                }
 
             if !text.isEmpty {
                 Button {
@@ -22,6 +29,7 @@ struct SearchBar: View {
                         .font(.system(size: 13))
                 }
                 .buttonStyle(.plain)
+                .help("Clear search (Esc)")
             }
         }
         .padding(.horizontal, 10)

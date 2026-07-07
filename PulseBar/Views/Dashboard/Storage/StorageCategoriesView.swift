@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Categories list. Tapping a row drills into `CategoryDetailView`.
+/// Categories list. Tapping a row opens the Files review scoped to that category.
 struct StorageCategoriesView: View {
     @EnvironmentObject private var storageVM: StorageViewModel
 
@@ -22,7 +22,8 @@ struct StorageCategoriesView: View {
                         runningCount: storageVM.state.scanProgress?.runningCounts[category],
                         needsFullDiskAccess: category.requiresFullDiskAccess
                             && storageVM.state.fullDiskAccessGranted == false,
-                        onTap: { storageVM.selectedCategory = category },
+                        actionKind: StorageViewModel.actionKind(for: category),
+                        onTap: { storageVM.showFiles(category: category) },
                         onSelectAll: { storageVM.selectAll(in: category) },
                         onDeselectAll: { storageVM.deselectAll(in: category) },
                         selectedCount: selectedCount(in: category),
@@ -30,11 +31,6 @@ struct StorageCategoriesView: View {
                     )
                 }
             }
-        }
-        .sheet(item: $storageVM.selectedCategory) { category in
-            CategoryDetailView(category: category)
-                .environmentObject(storageVM)
-                .frame(minWidth: 720, minHeight: 520)
         }
     }
 
@@ -64,6 +60,15 @@ struct StorageCategoriesView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(storageVM.isScanRunning)
+
+            if storageVM.state.totalJunkBytes > 0 && !storageVM.isScanRunning {
+                Button {
+                    storageVM.quickSelectAllAndShowFiles()
+                } label: {
+                    Label("Review & Clean", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+            }
         }
         .padding(18)
         .background(.regularMaterial)

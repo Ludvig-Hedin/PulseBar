@@ -5,15 +5,16 @@ import AppKit
 /// Fastest path from "scan done" to "items deleted": no per-category drill-down required.
 struct AllFilesView: View {
     @EnvironmentObject private var storageVM: StorageViewModel
-    @State private var localSearch: String = ""
 
     var body: some View {
         if storageVM.isScanRunning {
             scanningState
+        } else if let category = storageVM.fileCategoryFilter {
+            categoryContent(category)
         } else if !storageVM.state.hasFreshScan {
             noScanState
         } else {
-            fileList
+            fileList(category: nil, includeRevealOnly: false)
         }
     }
 
@@ -38,6 +39,32 @@ struct AllFilesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func noCategoryScanState(_ category: StorageCategory) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: category.symbol)
+                .font(.system(size: 44))
+                .foregroundStyle(category.tint)
+            Text("\(category.title) has not been scanned")
+                .font(.title3.weight(.semibold))
+            Text("Scan this category to review its current storage impact.")
+                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Button {
+                    storageVM.startScan([category])
+                } label: {
+                    Label("Scan \(category.title)", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Show All Cleanable Files") {
+                    storageVM.showFiles()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var scanningState: some View {
         VStack(spacing: 12) {
             ProgressView()
@@ -49,15 +76,47 @@ struct AllFilesView: View {
 
     // MARK: - File list
 
-    private var fileList: some View {
-        let items = storageVM.allItemsSorted(searchText: localSearch)
+    @ViewBuilder
+    private func categoryContent(_ category: StorageCategory) -> some View {
+        switch StorageViewModel.actionKind(for: category) {
+        case .cleanable:
+            if storageVM.state.categoryResults[category] == nil {
+                noCategoryScanState(category)
+            } else {
+                fileList(category: category, includeRevealOnly: false)
+            }
+        case .revealOnly:
+            if storageVM.state.categoryResults[category] == nil {
+                noCategoryScanState(category)
+            } else {
+                fileList(category: category, includeRevealOnly: true)
+            }
+        case .externalAction:
+            if storageVM.state.categoryResults[category] == nil {
+                noCategoryScanState(category)
+            } else {
+                dockerActionState
+            }
+        case .informational:
+            if storageVM.state.categoryResults[category] == nil {
+                noCategoryScanState(category)
+            } else {
+                informationalState(category)
+            }
+        }
+    }
+
+    private func fileList(category: StorageCategory?, includeRevealOnly: Bool) -> some View {
+        let items = storageVM.allItemsSorted(category: category,
+                                             searchText: storageVM.searchText,
+                                             includeRevealOnly: includeRevealOnly)
         return VStack(spacing: 0) {
-            toolbar(totalItemCount: storageVM.allItemsSorted().count)
+            toolbar(category: category,
+                    includeRevealOnly: includeRevealOnly,
+                    visibleItemCount: items.count)
             Divider()
             if items.isEmpty {
-                Text(localSearch.isEmpty ? "Nothing to clean" : "No results for \"\(localSearch)\"")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyResultsState(category: category, includeRevealOnly: includeRevealOnly)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 4) {
@@ -65,6 +124,7 @@ struct AllFilesView: View {
                             AllFileRow(
                                 item: item,
                                 isSelected: storageVM.selectedItems.contains(item.url),
+                                isSelectable: StorageViewModel.isCleanable(item.category),
                                 toggle: { storageVM.toggleSelection(item.url) }
                             )
                         }
@@ -76,9 +136,19 @@ struct AllFilesView: View {
         }
     }
 
-    private func toolbar(totalItemCount: Int) -> some View {
+    private func toolbar(category: StorageCategory?, includeRevealOnly: Bool, visibleItemCount: Int) -> some View {
         HStack(spacing: 8) {
-            SearchBar(text: $localSearch, placeholder: "Search all files")
+            SearchBar(text: $storageVM.searchText, placeholder: category == nil ? "Search all files" : "Search \(category?.title ?? "files")")
+
+            if let category {
+                Button {
+                    storageVM.showFiles()
+                } label: {
+                    Label(category.title, systemImage: "xmark.circle")
+                }
+                .buttonStyle(.bordered)
+                .help("Clear category filter")
+            }
 
             Menu {
                 Picker("Sort by", selection: $storageVM.sortColumn) {
@@ -109,13 +179,193 @@ struct AllFilesView: View {
 
             Divider().frame(height: 20)
 
-            Button("Select All") { storageVM.selectAllCleanable() }
-                .buttonStyle(.bordered)
-            Button("Deselect All") { storageVM.clearSelection() }
-                .buttonStyle(.bordered)
+            if includeRevealOnly {
+                Text("Reveal-only")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Select Visible") { storageVM.selectAllVisibleReviewItems() }
+                    .buttonStyle(.bordered)
+                    .disabled(visibleItemCount == 0)
+
+                Button("Deselect Visible") { storageVM.deselectAllVisibleReviewItems() }
+                    .buttonStyle(.bordered)
+                    .disabled(visibleItemCount == 0)
+
+                if storageVM.selectedTotalCount > 0 {
+                    Text("\(storageVM.selectedTotalCount) selected · \(ByteFormatting.memory(storageVM.selectedTotalBytes))")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+
+                    Button {
+                        storageVM.requestCleanup()
+                    } label: {
+                        Label("Clean Selected", systemImage: "trash")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(storageVM.isCleaning)
+                    .help("Review and clean selected items")
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    private func emptyResultsState(category: StorageCategory?, includeRevealOnly: Bool) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: includeRevealOnly ? "doc.text.magnifyingglass" : "checkmark.circle")
+                .font(.system(size: 36))
+                .foregroundStyle(.tertiary)
+            Text(emptyTitle(category: category, includeRevealOnly: includeRevealOnly))
+                .font(.headline)
+            Text(emptySubtitle(category: category, includeRevealOnly: includeRevealOnly))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 10) {
+                if !storageVM.searchText.isEmpty {
+                    Button("Clear Search") {
+                        storageVM.searchText = ""
+                    }
+                    .buttonStyle(.bordered)
+                }
+                if let category {
+                    Button {
+                        storageVM.startScan([category])
+                    } label: {
+                        Label("Scan Again", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(28)
+    }
+
+    private func emptyTitle(category: StorageCategory?, includeRevealOnly: Bool) -> String {
+        if !storageVM.searchText.isEmpty {
+            return "No results for \"\(storageVM.searchText)\""
+        }
+        if includeRevealOnly {
+            return "No large files found"
+        }
+        if let category {
+            return "No cleanable files in \(category.title)"
+        }
+        return "Nothing to clean"
+    }
+
+    private func emptySubtitle(category: StorageCategory?, includeRevealOnly: Bool) -> String {
+        if !storageVM.searchText.isEmpty {
+            return "Clear the search or scan again to review more files."
+        }
+        if includeRevealOnly {
+            return "PulseBar did not find large files in the scanned dev-tooling locations."
+        }
+        if let category {
+            return "\(category.title) is already clean based on the latest scan."
+        }
+        return "Smart Scan did not find deletable cache, log, Trash, or dev-artifact files."
+    }
+
+    private var dockerActionState: some View {
+        let result = storageVM.state.categoryResults[.docker]
+        let bytes = result?.totalSizeBytes ?? 0
+        let unavailable = result?.errors.isEmpty == false
+        return VStack(spacing: 16) {
+            Image(systemName: "cube.box")
+                .font(.system(size: 46))
+                .foregroundStyle(StorageCategory.docker.tint)
+            Text(dockerTitle(bytes: bytes, unavailable: unavailable))
+                .font(.title3.weight(.semibold))
+            Text(dockerSubtitle(bytes: bytes, unavailable: unavailable))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 520)
+            HStack(spacing: 10) {
+                Button {
+                    storageVM.startScan([.docker])
+                } label: {
+                    Label("Scan Docker", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .disabled(storageVM.isPruningDocker)
+
+                if bytes > 0 {
+                    Button {
+                        storageVM.requestDockerPrune()
+                    } label: {
+                        Label(storageVM.isPruningDocker ? "Pruning…" : "Prune Docker", systemImage: "trash")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(storageVM.isPruningDocker)
+                }
+
+                Button("Show All Cleanable Files") {
+                    storageVM.showFiles()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(32)
+    }
+
+    private func dockerTitle(bytes: UInt64, unavailable: Bool) -> String {
+        if bytes > 0 { return "Docker prune available" }
+        if unavailable { return "Docker not running" }
+        return "No Docker cleanup needed"
+    }
+
+    private func dockerSubtitle(bytes: UInt64, unavailable: Bool) -> String {
+        if bytes > 0 {
+            return "\(ByteFormatting.memory(bytes)) is reported as reclaimable by Docker. PulseBar runs `docker system prune -f`, which does not remove Docker volumes."
+        }
+        if unavailable {
+            return "Docker CLI is unavailable or the Docker daemon is not running. Start Docker, then scan again."
+        }
+        return "Docker is not reporting reclaimable images, containers, networks, or build cache right now."
+    }
+
+    private func informationalState(_ category: StorageCategory) -> some View {
+        let result = storageVM.state.categoryResults[category]
+        let bytes = result?.totalSizeBytes ?? 0
+        return VStack(spacing: 16) {
+            Image(systemName: category.symbol)
+                .font(.system(size: 46))
+                .foregroundStyle(category.tint)
+            Text(category == .purgeableSpace ? "Managed by macOS" : category.title)
+                .font(.title3.weight(.semibold))
+            Text(informationalSubtitle(category, bytes: bytes))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 520)
+            HStack(spacing: 10) {
+                Button {
+                    storageVM.startScan([category])
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+
+                Button("Show All Cleanable Files") {
+                    storageVM.showFiles()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(32)
+    }
+
+    private func informationalSubtitle(_ category: StorageCategory, bytes: UInt64) -> String {
+        if category == .purgeableSpace {
+            let amount = bytes > 0 ? "\(ByteFormatting.memory(bytes)) is currently purgeable. " : ""
+            return amount + "macOS reclaims this space automatically when apps need room, so PulseBar does not show it as deletable files."
+        }
+        return category.subtitle
     }
 }
 
@@ -124,11 +374,12 @@ struct AllFilesView: View {
 private struct AllFileRow: View {
     let item: CleanableItem
     let isSelected: Bool
+    let isSelectable: Bool
     let toggle: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+            Image(systemName: rowIcon)
                 .font(.title3)
                 .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                 .frame(width: 22, height: 22)
@@ -161,16 +412,27 @@ private struct AllFileRow: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 72, alignment: .trailing)
+
+            if !isSelectable {
+                Button {
+                    revealInFinder()
+                } label: {
+                    Image(systemName: "magnifyingglass.circle")
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .help("Reveal in Finder")
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .onTapGesture { toggle() }
+        .onTapGesture { if isSelectable { toggle() } }
         .contextMenu {
             Button {
-                NSWorkspace.shared.activateFileViewerSelecting([item.url])
+                revealInFinder()
             } label: {
                 Label("Reveal in Finder", systemImage: "magnifyingglass.circle")
             }
@@ -181,12 +443,23 @@ private struct AllFileRow: View {
             } label: {
                 Label("Copy Path", systemImage: "doc.on.doc")
             }
-            Divider()
-            Button(role: .destructive) {
-                toggle()   // ensure selected, then let user confirm via StickyCleanBar
-            } label: {
-                Label(isSelected ? "Deselect" : "Select for Cleanup", systemImage: isSelected ? "minus.square" : "checkmark.square")
+            if isSelectable {
+                Divider()
+                Button(role: .destructive) {
+                    toggle()
+                } label: {
+                    Label(isSelected ? "Deselect" : "Select for Cleanup", systemImage: isSelected ? "minus.square" : "checkmark.square")
+                }
             }
         }
+    }
+
+    private var rowIcon: String {
+        if isSelectable { return isSelected ? "checkmark.square.fill" : "square" }
+        return "eye"
+    }
+
+    private func revealInFinder() {
+        NSWorkspace.shared.activateFileViewerSelecting([item.url])
     }
 }
