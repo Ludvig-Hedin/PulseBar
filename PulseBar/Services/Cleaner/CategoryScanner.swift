@@ -51,6 +51,12 @@ enum CategoryScanner {
                                  cancellation: cancellation,
                                  progress: progress)
 
+        case .devArtifacts:
+            return scanDevArtifacts(budget: budget,
+                                    deadline: deadline,
+                                    cancellation: cancellation,
+                                    progress: progress)
+
         case .docker:
             return scanDocker()
 
@@ -262,6 +268,29 @@ enum CategoryScanner {
                               scannedAt: .now,
                               truncated: truncated,
                               errors: errors)
+    }
+
+    // MARK: - Developer artifacts
+
+    /// Deep-Scan-only. Finds whole build/cache directories (`node_modules`,
+    /// `target`, `.venv`, …) across the home folder via `ArtifactEnumerator`.
+    private static func scanDevArtifacts(budget: ScanBudget,
+                                         deadline: Date,
+                                         cancellation: () -> Bool,
+                                         progress: ((UInt64, Int) -> Void)?) -> CategoryResult {
+        let result = ArtifactEnumerator.enumerate(
+            roots: Locations.devArtifactRoots,
+            budget: budget,
+            deadline: deadline,
+            cancellation: cancellation,
+            progress: progress
+        )
+        return CategoryResult(category: .devArtifacts,
+                              items: result.items,
+                              totalSizeBytes: result.totalSizeBytes,
+                              scannedAt: .now,
+                              truncated: result.truncated,
+                              errors: result.errors)
     }
 
     // MARK: - Docker

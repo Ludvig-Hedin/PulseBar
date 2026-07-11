@@ -50,6 +50,15 @@ struct StorageDashboardView: View {
                     .disabled(storageVM.isScanRunning || storageVM.isAutoCleaning)
 
                     Button {
+                        storageVM.startScan(tier: .deep)
+                    } label: {
+                        Label("Deep Scan", systemImage: "magnifyingglass")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(storageVM.isScanRunning || storageVM.isAutoCleaning)
+                    .help("Also scan large files and project artifacts (node_modules, build, target, .venv) across your home folder.")
+
+                    Button {
                         storageVM.requestQuickClean()
                     } label: {
                         Label(storageVM.isAutoCleaning ? "Cleaning…" : "Quick Clean",

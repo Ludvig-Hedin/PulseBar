@@ -48,7 +48,7 @@ enum ScanTier: String, CaseIterable, Identifiable, Codable, Hashable {
         case .quick:
             return StorageCategory.allCases.filter(\.isInSmartScan)
         case .deep:
-            return StorageCategory.allCases.filter(\.isInSmartScan) + [.largeFiles]
+            return StorageCategory.allCases.filter(\.isInSmartScan) + [.largeFiles, .devArtifacts]
         case .ultra:
             return []
         }

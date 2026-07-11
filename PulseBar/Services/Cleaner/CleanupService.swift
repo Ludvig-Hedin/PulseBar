@@ -33,30 +33,42 @@ actor CleanupService {
         for item in items {
             let resolved = item.url.resolvingSymlinksInPath().standardizedFileURL
 
-            guard PathAllowlist.isScanAllowed(resolved) else {
-                records.append(makeRecord(item: item, mode: mode, result: .refused("Path not on allowlist")))
+            // Developer artifacts live outside the normal deletion allowlist
+            // (they're across the home folder), so they pass a separate,
+            // marker-gated check and are ALWAYS trashed — never permanent/admin.
+            // The dir-entry size check below is a weak TOCTOU guard for
+            // directories, so trash (reversible) is the only safe mode.
+            let isDevArtifact = item.category == .devArtifacts
+            let effectiveMode: DeletionMode = isDevArtifact ? .trash : mode
+
+            let allowed = isDevArtifact
+                ? PathAllowlist.isArtifactDeleteAllowed(resolved)
+                : PathAllowlist.isScanAllowed(resolved)
+            guard allowed else {
+                records.append(makeRecord(item: item, mode: effectiveMode, result: .refused("Path not on allowlist")))
                 continue
             }
 
-            if mode == .adminPermanent && !PathAllowlist.isAdminEscalationAllowed(resolved) {
-                records.append(makeRecord(item: item, mode: mode, result: .refused("Admin escalation not allowed for this path")))
+            if effectiveMode == .adminPermanent && !PathAllowlist.isAdminEscalationAllowed(resolved) {
+                records.append(makeRecord(item: item, mode: effectiveMode, result: .refused("Admin escalation not allowed for this path")))
                 continue
             }
 
             guard let attrs = try? FileManager.default.attributesOfItem(atPath: resolved.path) else {
-                records.append(makeRecord(item: item, mode: mode, result: .failed("File no longer exists")))
+                records.append(makeRecord(item: item, mode: effectiveMode, result: .failed("File no longer exists")))
                 continue
             }
 
             let currentSize = (attrs[.size] as? UInt64) ?? 0
             // Defence against "user just dropped a 50GB file at this path between scan and clean".
             // Only applies if we had a non-trivial original size to compare against.
-            if item.sizeBytes > 1_024 && currentSize > item.sizeBytes * 10 {
-                records.append(makeRecord(item: item, mode: mode, result: .refused("File grew unexpectedly since scan")))
+            // Skipped for directory artifacts, whose entry size isn't the recursive size.
+            if !isDevArtifact && item.sizeBytes > 1_024 && currentSize > item.sizeBytes * 10 {
+                records.append(makeRecord(item: item, mode: effectiveMode, result: .refused("File grew unexpectedly since scan")))
                 continue
             }
 
-            switch mode {
+            switch effectiveMode {
             case .trash:
                 records.append(performTrash(item: item, resolved: resolved))
             case .permanent:

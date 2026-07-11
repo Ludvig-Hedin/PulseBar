@@ -102,11 +102,49 @@ enum Locations {
                 home.appendingPathComponent(".m2/repository", isDirectory: true),
             ]
 
+        case .devArtifacts:
+            return devArtifactRoots
+
         case .brewCache, .docker, .purgeableSpace, .smartScan:
             // Dynamic — scanner resolves via CommandRunner / system APIs.
             return []
         }
     }
+
+    // MARK: - Developer artifacts (Deep Scan)
+
+    /// Roots walked by the developer-artifact finder. The whole home folder —
+    /// the walker prunes protected + noisy subtrees for speed, and
+    /// `PathAllowlist` is the authority on what may actually be deleted.
+    static var devArtifactRoots: [URL] { [home] }
+
+    /// Unambiguous build/cache directory names, reported wherever they appear.
+    static let unconditionalArtifactMarkers: Set<String> = [
+        "node_modules", ".next", ".nuxt", "Pods", "DerivedData",
+        ".venv", "__pycache__", ".pytest_cache", ".mypy_cache",
+        ".turbo", ".parcel-cache",
+    ]
+
+    /// Common words that are only treated as artifacts when a sibling project
+    /// manifest proves the parent directory is a real project (avoids nuking a
+    /// user folder literally named "build" or "target").
+    static let projectScopedArtifactMarkers: Set<String> = [
+        "dist", "build", "target", "venv", ".gradle",
+    ]
+
+    /// Files whose presence marks a directory as a genuine project root.
+    static let projectManifests: Set<String> = [
+        "package.json", "Cargo.toml", "go.mod", "pom.xml",
+        "build.gradle", "build.gradle.kts", "Podfile", "pyproject.toml",
+        "requirements.txt", "setup.py", "Gemfile", "composer.json",
+        "pubspec.yaml", "tsconfig.json",
+    ]
+
+    /// Directory names the artifact walk never descends into. Performance only —
+    /// the safety boundary is `PathAllowlist`.
+    static let artifactTraversalSkips: Set<String> = [
+        "Library", "Applications", ".Trash", ".git", ".svn", ".hg",
+    ]
 
     /// Candidate launch paths for the binary backing a category.
     static func cliCandidates(for category: StorageCategory) -> [String] {

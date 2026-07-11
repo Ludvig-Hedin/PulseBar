@@ -97,6 +97,37 @@ enum PathAllowlist {
         return adminEscalationRoots.contains(where: { isUnder(resolved, root: normalize($0)) })
     }
 
+    // MARK: - Developer artifacts (Deep Scan)
+
+    /// Recognised artifact directory names. The delete gate requires the leaf
+    /// name to be one of these, so only whole `node_modules`/`build`/… folders
+    /// can be removed — never an arbitrary file the walk happened to surface.
+    static var artifactMarkers: Set<String> {
+        Locations.unconditionalArtifactMarkers.union(Locations.projectScopedArtifactMarkers)
+    }
+
+    /// READ gate for the developer-artifact finder. Broader than `isScanAllowed`
+    /// (spans the whole home folder) but still rejects protected user
+    /// directories, symlink escapes, and PulseBar-owned paths. Read-only — it
+    /// does NOT authorise deletion.
+    static func isArtifactScanAllowed(_ url: URL) -> Bool {
+        guard let resolved = resolvedPath(url) else { return false }
+        if containsPathSeparatorEscape(resolved) { return false }
+        if isProtected(resolved) { return false }
+        if isPulseBarOwned(resolved) { return false }
+        return Locations.devArtifactRoots.contains(where: { isUnder(resolved, root: normalize($0)) })
+    }
+
+    /// DELETE gate for developer artifacts. True only when the path is inside a
+    /// dev root (and not protected) AND its own leaf name is a recognised
+    /// artifact marker. So `.../proj/node_modules` is deletable, but
+    /// `.../proj/node_modules/some.js` or `.../proj/src` is not.
+    static func isArtifactDeleteAllowed(_ url: URL) -> Bool {
+        guard isArtifactScanAllowed(url), let resolved = resolvedPath(url) else { return false }
+        let name = (resolved as NSString).lastPathComponent
+        return artifactMarkers.contains(name)
+    }
+
     /// Directory-boundary-aware prefix check. Prevents `~/.cargo/registry-backup`
     /// from matching the `~/.cargo/registry` allowlist entry.
     private static func isUnder(_ path: String, root: String) -> Bool {

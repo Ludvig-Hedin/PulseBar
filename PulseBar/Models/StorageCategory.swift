@@ -16,6 +16,7 @@ enum StorageCategory: String, CaseIterable, Identifiable, Codable, Hashable {
     case xcodeJunk
     case brewCache
     case nodeCache
+    case devArtifacts
     case docker
     case purgeableSpace
     case smartScan
@@ -33,6 +34,7 @@ enum StorageCategory: String, CaseIterable, Identifiable, Codable, Hashable {
         case .xcodeJunk:      return "Xcode"
         case .brewCache:      return "Homebrew Cache"
         case .nodeCache:      return "Node / npm / yarn / pnpm"
+        case .devArtifacts:   return "Project Artifacts"
         case .docker:         return "Docker"
         case .purgeableSpace: return "Purgeable"
         case .smartScan:      return "Smart Scan"
@@ -50,6 +52,7 @@ enum StorageCategory: String, CaseIterable, Identifiable, Codable, Hashable {
         case .xcodeJunk:      return "DerivedData, Archives, simulators, device support"
         case .brewCache:      return "Downloaded bottles and casks"
         case .nodeCache:      return "Package caches for npm, yarn, and pnpm"
+        case .devArtifacts:   return "node_modules, build, target, .venv in your projects (Deep Scan)"
         case .docker:         return "Unused images, containers, networks, and build cache"
         case .purgeableSpace: return "Snapshots macOS can reclaim automatically"
         case .smartScan:      return "Scan all curated categories sequentially"
@@ -67,6 +70,7 @@ enum StorageCategory: String, CaseIterable, Identifiable, Codable, Hashable {
         case .xcodeJunk:      return "hammer"
         case .brewCache:      return "mug"
         case .nodeCache:      return "shippingbox"
+        case .devArtifacts:   return "chevron.left.forwardslash.chevron.right"
         case .docker:         return "cube.box"
         case .purgeableSpace: return "sparkles.rectangle.stack"
         case .smartScan:      return "wand.and.stars"
@@ -84,6 +88,7 @@ enum StorageCategory: String, CaseIterable, Identifiable, Codable, Hashable {
         case .xcodeJunk:      return .brown
         case .brewCache:      return .orange
         case .nodeCache:      return .green
+        case .devArtifacts:   return .pink
         case .docker:         return .cyan
         case .purgeableSpace: return .mint
         case .smartScan:      return .accentColor
@@ -113,7 +118,9 @@ enum StorageCategory: String, CaseIterable, Identifiable, Codable, Hashable {
     /// individually.
     var isInSmartScan: Bool {
         switch self {
-        case .smartScan, .largeFiles, .docker: return false
+        // Dev artifacts are Deep-Scan only: they live across the home folder and
+        // are too heavy/noisy for the fast curated Smart Scan.
+        case .smartScan, .largeFiles, .docker, .devArtifacts: return false
         default: return true
         }
     }
@@ -121,7 +128,7 @@ enum StorageCategory: String, CaseIterable, Identifiable, Codable, Hashable {
     /// Categories surfaced in the sidebar list, in order.
     static var displayedCategories: [StorageCategory] {
         [.systemJunk, .userCache, .aiApps, .mailDownloads, .xcodeJunk,
-         .brewCache, .nodeCache, .docker, .trash, .largeFiles, .purgeableSpace]
+         .brewCache, .nodeCache, .devArtifacts, .docker, .trash, .largeFiles, .purgeableSpace]
     }
 }
 
