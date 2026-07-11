@@ -9,6 +9,11 @@ struct StorageState: Equatable {
     var lastScanError: ScanError?
     var fullDiskAccessGranted: Bool? = nil
 
+    /// Whole-disk read-only inventory (Ultra Scan). Separate from `categoryResults`
+    /// — it never feeds the deletion flow.
+    var inventoryRoot: InventoryNode?
+    var inventoryProgress: InventoryProgress?
+
     /// Sum of all freshly-scanned, *deletable* category sizes. Purgeable space is
     /// reclaimed by macOS, Docker requires `docker system prune`, and Large Files
     /// is reveal-only user data; excluding them keeps "Junk found" honest about

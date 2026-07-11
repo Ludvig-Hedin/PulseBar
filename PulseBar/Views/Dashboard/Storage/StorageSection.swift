@@ -42,6 +42,9 @@ struct StorageSection: View {
                 case .categories:
                     StorageCategoriesView()
                         .environmentObject(storageVM)
+                case .diskMap:
+                    DiskInventoryView()
+                        .environmentObject(storageVM)
                 case .settings:
                     StorageSettingsView()
                         .environmentObject(storageVM)

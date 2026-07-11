@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 /// Storage-tab UI facade over `StorageService`. Owns selection + filtering state
 /// that's irrelevant outside the Storage tab.
@@ -9,6 +10,7 @@ final class StorageViewModel: ObservableObject {
         case dashboard = "Dashboard"
         case files = "Files"
         case categories = "Categories"
+        case diskMap = "Disk Map"
         case settings = "Settings"
         var id: String { rawValue }
         var symbol: String {
@@ -16,6 +18,7 @@ final class StorageViewModel: ObservableObject {
             case .dashboard:  return "chart.pie"
             case .files:      return "list.bullet.rectangle"
             case .categories: return "tray.full"
+            case .diskMap:    return "square.grid.3x3.topleft.filled"
             case .settings:   return "slider.horizontal.3"
             }
         }
@@ -122,6 +125,27 @@ final class StorageViewModel: ObservableObject {
     func cancelScan() { service.cancelScan() }
 
     var isScanRunning: Bool { state.scanProgress != nil }
+
+    // MARK: - Ultra Scan (whole-disk inventory)
+
+    /// Starts the read-only whole-disk map and switches to the Disk Map view.
+    func startUltraScan() {
+        guard !isScanRunning, !isAutoCleaning else { return }
+        subview = .diskMap
+        service.startInventory()
+    }
+
+    func cancelUltraScan() { service.cancelInventory() }
+
+    var isInventoryRunning: Bool { state.inventoryProgress != nil }
+    var inventoryProgress: InventoryProgress? { state.inventoryProgress }
+    var inventoryRoot: InventoryNode? { state.inventoryRoot }
+
+    /// Opens a folder in Finder (Reveal). Ultra map is read-only — this is the
+    /// only action it offers.
+    func revealInFinder(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
 
     // MARK: - Auto-clean (trash-only, manual)
 

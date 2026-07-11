@@ -11,6 +11,10 @@ final class StorageService: ObservableObject {
     private let scanEngine = ScanEngine()
     private let cleanupService = CleanupService()
     private let fdaDetector = FullDiskAccessDetector()
+    private let inventoryEngine = DiskInventoryEngine()
+
+    /// Consumer for the whole-disk inventory stream (Ultra Scan).
+    private var inventoryConsumer: Task<Void, Never>?
 
     /// Single auditable owner of the unattended scan→trash flow.
     private(set) lazy var autoCleanCoordinator = AutoCleanCoordinator(service: self)
@@ -104,6 +108,59 @@ final class StorageService: ObservableObject {
         }
         state.scanProgress = nil
         return results
+    }
+
+    // MARK: - Ultra Scan (whole-disk inventory)
+
+    /// Starts the read-only whole-disk inventory. Refreshes FDA state so the
+    /// banner nudges the user if access is missing (the walk still runs, just
+    /// with gaps where access is denied).
+    func startInventory() {
+        cancelInventory()
+        state.inventoryProgress = InventoryProgress(scannedFiles: 0, scannedBytes: 0, startedAt: .now)
+        state.inventoryRoot = nil
+        state.lastScanError = nil
+
+        Task { [weak self] in
+            guard let self else { return }
+            let granted = await self.fdaDetector.hasFullDiskAccess()
+            await MainActor.run { self.state.fullDiskAccessGranted = granted }
+        }
+
+        inventoryConsumer = Task { [weak self] in
+            guard let self else { return }
+            let stream = await self.inventoryEngine.inventory(budget: .default)
+            for await event in stream {
+                if Task.isCancelled { break }
+                await self.handleInventory(event)
+            }
+            await MainActor.run { self.state.inventoryProgress = nil }
+        }
+    }
+
+    func cancelInventory() {
+        inventoryConsumer?.cancel()
+        inventoryConsumer = nil
+        Task { await inventoryEngine.cancel() }
+        state.inventoryProgress = nil
+    }
+
+    var isInventoryRunning: Bool { state.inventoryProgress != nil }
+
+    private func handleInventory(_ event: DiskInventoryEngine.Event) {
+        switch event {
+        case .started:
+            break
+        case .progress(let files, let bytes):
+            state.inventoryProgress?.scannedFiles = files
+            state.inventoryProgress?.scannedBytes = bytes
+        case .finished(let root):
+            state.inventoryRoot = root
+            state.inventoryProgress = nil
+        case .failed(let error):
+            state.lastScanError = error
+            state.inventoryProgress = nil
+        }
     }
 
     /// Replaces cached results from the scan engine on first Storage-tab open.

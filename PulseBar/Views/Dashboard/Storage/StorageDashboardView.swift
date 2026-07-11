@@ -59,6 +59,15 @@ struct StorageDashboardView: View {
                     .help("Also scan large files and project artifacts (node_modules, build, target, .venv) across your home folder.")
 
                     Button {
+                        storageVM.startUltraScan()
+                    } label: {
+                        Label("Ultra Scan", systemImage: "globe")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(storageVM.isScanRunning || storageVM.isAutoCleaning || storageVM.isInventoryRunning)
+                    .help("Map every file on your whole disk (read-only) to find where space went.")
+
+                    Button {
                         storageVM.requestQuickClean()
                     } label: {
                         Label(storageVM.isAutoCleaning ? "Cleaning…" : "Quick Clean",
