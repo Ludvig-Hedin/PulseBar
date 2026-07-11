@@ -35,6 +35,22 @@ final class NotificationService {
 
     private init() {}
 
+    /// Posts a one-off, user-initiated result banner (e.g. after an auto-clean).
+    /// Bypasses the threshold anti-spam pipeline — this fires in direct response
+    /// to a user action, not a metric crossing — but still respects the global
+    /// notifications toggle. A stable identifier coalesces repeats.
+    func postAutoCleanResult(title: String, body: String) {
+        guard PreferencesService.shared.notificationsEnabled,
+              !PreferencesService.shared.pauseNotifications else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        let request = UNNotificationRequest(identifier: "pulsebar.autoclean.result",
+                                            content: content,
+                                            trigger: nil)
+        center.add(request)
+    }
+
     /// Ask for notification permission. Safe to call repeatedly; the system only prompts once.
     func requestAuthorizationIfNeeded() {
         center.getNotificationSettings { [weak self] settings in

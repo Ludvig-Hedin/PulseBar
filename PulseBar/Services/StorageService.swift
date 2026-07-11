@@ -12,6 +12,9 @@ final class StorageService: ObservableObject {
     private let cleanupService = CleanupService()
     private let fdaDetector = FullDiskAccessDetector()
 
+    /// Single auditable owner of the unattended scan→trash flow.
+    private(set) lazy var autoCleanCoordinator = AutoCleanCoordinator(service: self)
+
     /// Currently-running scan consumer task. Cancelled when a new scan is started
     /// or when the user explicitly cancels.
     private var scanConsumer: Task<Void, Never>?
@@ -76,6 +79,31 @@ final class StorageService: ObservableObject {
         scanConsumer = nil
         Task { await scanEngine.cancel() }
         state.scanProgress = nil
+    }
+
+    /// Runs a Quick-tier scan and returns its fresh results once complete. Used by
+    /// `AutoCleanCoordinator`, which needs the results synchronously rather than
+    /// through the live `state.scanProgress` stream. Still updates `state` (and
+    /// fires the same `.finished` hooks) so the UI stays in sync.
+    func runQuickScanToCompletion() async -> [StorageCategory: CategoryResult] {
+        cancelScan()
+        let tier = ScanTier.quick
+        let target = ScanEngine.smartScanCategories
+        currentScanCategories = target
+        currentTier = tier
+        state.scanProgress = ScanProgress(targetCategories: target, currentCategory: nil, startedAt: .now)
+        state.lastScanError = nil
+
+        var results: [StorageCategory: CategoryResult] = [:]
+        let stream = await scanEngine.startScan(target, budget: tier.budget)
+        for await event in stream {
+            if case .completed(let result) = event {
+                results[result.category] = result
+            }
+            await handle(event)
+        }
+        state.scanProgress = nil
+        return results
     }
 
     /// Replaces cached results from the scan engine on first Storage-tab open.

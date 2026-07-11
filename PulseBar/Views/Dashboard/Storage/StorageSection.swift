@@ -19,6 +19,11 @@ struct StorageSection: View {
                 cleanupSummaryCard(summary)
             }
 
+            if let outcome = storageVM.lastAutoCleanOutcome,
+               let banner = autoCleanBanner(for: outcome) {
+                banner
+            }
+
             // Always-visible scan progress so the user sees (and can cancel) work
             // regardless of which Storage sub-view they're on.
             LiveScanPanel()
@@ -67,6 +72,65 @@ struct StorageSection: View {
                 onPrune: { storageVM.performDockerPrune() }
             )
         }
+        .sheet(isPresented: $storageVM.showAutoCleanConsent) {
+            AutoCleanConsentDialog(
+                onCancel: { storageVM.cancelAutoCleanConsent() },
+                onAccept: { storageVM.confirmAutoCleanConsent() }
+            )
+        }
+    }
+
+    /// Banner for the non-success auto-clean outcomes. Success reuses the green
+    /// `cleanupSummaryCard`; here we cover the circuit-breaker pause and the
+    /// nothing-to-do case.
+    private func autoCleanBanner(for outcome: AutoCleanCoordinator.Outcome) -> AnyView? {
+        switch outcome.result {
+        case .abortedTooMuch:
+            return AnyView(noticeCard(
+                icon: "exclamationmark.triangle.fill",
+                tint: .orange,
+                title: "Auto-clean paused",
+                detail: "Found \(ByteFormatting.memory(outcome.bytesFound)) of junk — more than expected. Review it manually before cleaning.",
+                onDismiss: { storageVM.lastAutoCleanOutcome = nil }
+            ))
+        case .nothingFound:
+            return AnyView(noticeCard(
+                icon: "checkmark.circle.fill",
+                tint: .secondary,
+                title: "Nothing to clean",
+                detail: "Quick Clean found no safe junk to remove.",
+                onDismiss: { storageVM.lastAutoCleanOutcome = nil }
+            ))
+        case .cleaned, .disabled, .alreadyRunning:
+            return nil
+        }
+    }
+
+    private func noticeCard(icon: String, tint: Color, title: String, detail: String,
+                            onDismiss: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.body.weight(.semibold))
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button { onDismiss() } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .padding(14)
+        .background(tint == .secondary ? Color.secondary.opacity(0.08) : tint.opacity(0.10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder((tint == .secondary ? Color.secondary : tint).opacity(0.30), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var subviewPicker: some View {
@@ -140,6 +204,68 @@ struct StorageSection: View {
         }
     }
 
+}
+
+/// One-time consent shown before the first unattended auto-clean. Spells out
+/// exactly what "Quick Clean" does so the opt-in is informed.
+private struct AutoCleanConsentDialog: View {
+    let onCancel: () -> Void
+    let onAccept: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.title)
+                    .foregroundStyle(.green)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Turn on Quick Clean?")
+                        .font(.title2.weight(.semibold))
+                    Text("One click scans for safe junk and moves it straight to the Trash — no per-file review.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                consentRow(icon: "arrow.uturn.backward", text: "Everything goes to the Trash, so you can restore it. Nothing is deleted permanently.")
+                consentRow(icon: "shield.lefthalf.filled", text: "Only rebuildable caches and logs (system, app, Xcode, Homebrew, npm). Never your documents or large files.")
+                consentRow(icon: "gauge.with.dots.needle.67percent", text: "If a run finds far more than expected, it pauses and asks you to review instead.")
+            }
+            .padding(14)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button {
+                    onAccept()
+                } label: {
+                    Label("Turn On & Clean", systemImage: "sparkles")
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+    }
+
+    private func consentRow(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(.green)
+                .frame(width: 20)
+            Text(text)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
 }
 
 private struct DockerPruneConfirmationDialog: View {

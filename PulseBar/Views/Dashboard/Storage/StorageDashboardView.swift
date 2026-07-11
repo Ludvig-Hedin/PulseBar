@@ -47,7 +47,18 @@ struct StorageDashboardView: View {
                         Label(storageVM.isScanRunning ? "Scanning…" : "Smart Scan", systemImage: "wand.and.stars")
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(storageVM.isScanRunning)
+                    .disabled(storageVM.isScanRunning || storageVM.isAutoCleaning)
+
+                    Button {
+                        storageVM.requestQuickClean()
+                    } label: {
+                        Label(storageVM.isAutoCleaning ? "Cleaning…" : "Quick Clean",
+                              systemImage: "sparkles")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.green)
+                    .disabled(storageVM.isScanRunning || storageVM.isAutoCleaning)
+                    .help("Scan and move safe junk (caches, logs) straight to Trash — reversible.")
 
                     if storageVM.isScanRunning {
                         Button("Cancel", role: .destructive) {

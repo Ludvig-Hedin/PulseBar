@@ -33,6 +33,7 @@ final class PreferencesService: ObservableObject {
         static let notificationProfile = "pref.notificationProfile" // see NotificationProfile
         static let persistentCritical = "pref.persistentCritical"   // Bool — stick around for critical
         static let notificationCooldownMinutes = "pref.notificationCooldownMinutes" // Int — min minutes between any two notifications
+        static let autoCleanPolicy = "pref.autoCleanPolicy"      // Data — JSON encoded AutoCleanPolicy
     }
 
     /// How aggressively the app posts threshold notifications.
@@ -243,6 +244,22 @@ final class PreferencesService: ObservableObject {
         set {
             let data = (try? JSONEncoder().encode(newValue)) ?? Data()
             UserDefaults.standard.set(data, forKey: Key.autoQuitRules)
+        }
+    }
+
+    /// Trash-only auto-clean policy. Defaults to disabled until the user accepts
+    /// the one-time consent dialog. See `AutoCleanPolicy` for the safety model.
+    var autoCleanPolicy: AutoCleanPolicy {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: Key.autoCleanPolicy),
+                  let decoded = try? JSONDecoder().decode(AutoCleanPolicy.self, from: data) else {
+                return .default
+            }
+            return decoded
+        }
+        set {
+            let data = (try? JSONEncoder().encode(newValue)) ?? Data()
+            UserDefaults.standard.set(data, forKey: Key.autoCleanPolicy)
         }
     }
 

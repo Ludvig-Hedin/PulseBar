@@ -123,6 +123,61 @@ final class StorageViewModel: ObservableObject {
 
     var isScanRunning: Bool { state.scanProgress != nil }
 
+    // MARK: - Auto-clean (trash-only, manual)
+
+    /// True while a Quick Scan + Clean run is in flight (scan + trash).
+    @Published private(set) var isAutoCleaning = false
+    /// Drives the one-time consent sheet shown before the first auto-clean.
+    @Published var showAutoCleanConsent = false
+    /// Result of the most recent auto-clean run — the UI surfaces it as a banner
+    /// (success, "nothing found", or the circuit-breaker "paused" warning).
+    @Published var lastAutoCleanOutcome: AutoCleanCoordinator.Outcome?
+
+    /// Entry point for the "Quick Scan + Clean" button. Shows the consent sheet
+    /// the first time; runs directly once the user has opted in.
+    func requestQuickClean() {
+        guard !isAutoCleaning, !isScanRunning else { return }
+        if PreferencesService.shared.autoCleanPolicy.enabled {
+            runAutoCleanNow()
+        } else {
+            showAutoCleanConsent = true
+        }
+    }
+
+    /// User accepted the consent dialog: enable the policy and run immediately.
+    func confirmAutoCleanConsent() {
+        showAutoCleanConsent = false
+        var policy = PreferencesService.shared.autoCleanPolicy
+        policy.enabled = true
+        PreferencesService.shared.autoCleanPolicy = policy
+        runAutoCleanNow()
+    }
+
+    func cancelAutoCleanConsent() {
+        showAutoCleanConsent = false
+    }
+
+    private func runAutoCleanNow() {
+        guard !isAutoCleaning else { return }
+        isAutoCleaning = true
+        clearSelection()
+        Task {
+            let outcome = await service.autoCleanCoordinator.run(policy: PreferencesService.shared.autoCleanPolicy)
+            self.lastAutoCleanOutcome = outcome
+            if outcome.result == .cleaned {
+                self.lastCleanupSummary = CleanupSummary(
+                    kind: .files,
+                    succeeded: outcome.itemsTrashed,
+                    failed: 0,
+                    refused: 0,
+                    totalBytes: outcome.bytesReclaimed,
+                    completedAt: outcome.at
+                )
+            }
+            self.isAutoCleaning = false
+        }
+    }
+
     func showFiles(category: StorageCategory? = nil) {
         fileCategoryFilter = category
         searchText = ""
