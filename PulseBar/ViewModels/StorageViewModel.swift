@@ -100,8 +100,18 @@ final class StorageViewModel: ObservableObject {
     // MARK: - Scans
 
     func startSmartScan() {
+        startScan(tier: .quick)
+    }
+
+    /// Starts a tiered scan (Quick / Deep). Ultra uses the read-only inventory
+    /// path and is started via its own entry point.
+    func startScan(tier: ScanTier) {
+        guard !tier.usesInventoryPath else { return }
         clearSelection()
-        service.startScan([.smartScan])
+        // Quick maps to the existing Smart Scan expansion; Deep passes its
+        // explicit category set (quick categories + Large Files + dev artifacts).
+        let categories = tier == .quick ? [.smartScan] : tier.categories
+        service.startScan(categories, tier: tier)
     }
 
     func startScan(_ categories: [StorageCategory]) {

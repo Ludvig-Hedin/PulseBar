@@ -31,46 +31,75 @@ actor ScanEngine {
     /// Starts a scan over `categories`. Cancels any prior scan first. Returns a stream
     /// the caller consumes on its own task; the stream finishes after the last
     /// `.finished` event.
-    func startScan(_ categories: [StorageCategory]) -> AsyncStream<Event> {
+    ///
+    /// Categories run concurrently, bounded by `budget.maxConcurrentCategories`.
+    /// Each category touches a disjoint set of static roots, so parallelism only
+    /// adds IO pressure, not correctness hazards; results are still keyed by
+    /// category downstream.
+    func startScan(_ categories: [StorageCategory], budget: ScanBudget = .default) -> AsyncStream<Event> {
         cancelLocked()
         generation &+= 1
         let myGeneration = generation
         let (stream, continuation) = AsyncStream.makeStream(of: Event.self)
         let categoriesToRun = expand(categories)
+        let overallDeadline = Date().addingTimeInterval(budget.overallDeadlineSeconds)
+        let maxConcurrent = max(1, budget.maxConcurrentCategories)
 
         inFlight = Task.detached(priority: .utility) { [weak self] in
             guard let self else {
                 continuation.finish()
                 return
             }
-            for category in categoriesToRun {
-                if Task.isCancelled {
-                    continuation.yield(.failed(category, ScanError(path: "", reason: .cancelled)))
-                    break
+
+            // `Task.isCancelled` propagates from this detached task, so the actor's
+            // `cancelLocked()` makes every child scanner observe cancellation. The
+            // overall deadline is a second, time-based stop condition.
+            let stop: @Sendable () -> Bool = { Task.isCancelled || Date() > overallDeadline }
+
+            await withTaskGroup(of: (StorageCategory, CategoryResult?).self) { group in
+                var iterator = categoriesToRun.makeIterator()
+                var inFlightCount = 0
+
+                @Sendable func scanChild(_ category: StorageCategory) -> (StorageCategory, CategoryResult?) {
+                    if stop() { return (category, nil) }
+                    let deadline = min(Date().addingTimeInterval(budget.perCategoryDeadlineSeconds), overallDeadline)
+                    let result = CategoryScanner.scan(
+                        category: category,
+                        budget: budget,
+                        deadline: deadline,
+                        cancellation: stop,
+                        progress: { bytes, count in
+                            continuation.yield(.partial(category: category, runningBytes: bytes, runningCount: count))
+                        }
+                    )
+                    return (category, result)
                 }
-                continuation.yield(.started(category))
 
-                let deadline = Date().addingTimeInterval(CategoryScanner.defaultDeadlineSeconds)
-                // `Task.isCancelled` propagates from the detached task above, so when
-                // the actor's `cancelLocked()` cancels the task, the scanner's inner
-                // loop observes cancellation on the next iteration.
-                let cancellationFlag: () -> Bool = { Task.isCancelled }
+                func startNext() -> Bool {
+                    guard let category = iterator.next() else { return false }
+                    continuation.yield(.started(category))
+                    group.addTask(priority: .utility) { scanChild(category) }
+                    inFlightCount += 1
+                    return true
+                }
 
-                let result = CategoryScanner.scan(
-                    category: category,
-                    deadline: deadline,
-                    cancellation: cancellationFlag,
-                    progress: { bytes, count in
-                        continuation.yield(.partial(category: category, runningBytes: bytes, runningCount: count))
+                while inFlightCount < maxConcurrent, startNext() {}
+
+                while inFlightCount > 0 {
+                    guard let (category, result) = await group.next() else { break }
+                    inFlightCount -= 1
+                    if let result {
+                        // Discard writes from a superseded scan so a slow late finisher
+                        // cannot overwrite the newer scan's fresh results.
+                        let accepted = await self.storeIfCurrent(result: result, generation: myGeneration)
+                        if accepted { continuation.yield(.completed(result)) }
+                    } else {
+                        continuation.yield(.failed(category, ScanError(path: "", reason: .cancelled)))
                     }
-                )
-                // Discard writes from a superseded scan so a slow late finisher cannot
-                // overwrite the newer scan's fresh results.
-                let accepted = await self.storeIfCurrent(result: result, generation: myGeneration)
-                if accepted {
-                    continuation.yield(.completed(result))
+                    if !stop() { _ = startNext() }
                 }
             }
+
             continuation.yield(.finished)
             continuation.finish()
             await self.clearInFlightIfCurrent(generation: myGeneration)

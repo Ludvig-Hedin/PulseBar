@@ -20,6 +20,10 @@ final class StorageService: ObservableObject {
     /// `scanProgress.targetCategories`.
     private var currentScanCategories: [StorageCategory] = []
 
+    /// Tier of the most recently started scan. Drives the per-run budget and,
+    /// later, which snapshot is persisted.
+    private(set) var currentTier: ScanTier = .quick
+
     init() {
         // Best-effort first FDA probe so the banner state is right on first open.
         Task { [weak self] in
@@ -41,10 +45,12 @@ final class StorageService: ObservableObject {
     // MARK: - Scans
 
     /// Starts a scan. Cancels any prior scan first. Updates `state.scanProgress` live.
-    func startScan(_ categories: [StorageCategory]) {
+    func startScan(_ categories: [StorageCategory], tier: ScanTier = .quick) {
         cancelScan()
         let target = expandSmartScan(categories)
         currentScanCategories = target
+        currentTier = tier
+        let budget = tier.budget
         state.scanProgress = ScanProgress(
             targetCategories: target,
             currentCategory: nil,
@@ -54,7 +60,7 @@ final class StorageService: ObservableObject {
 
         scanConsumer = Task { [weak self] in
             guard let self else { return }
-            let stream = await self.scanEngine.startScan(target)
+            let stream = await self.scanEngine.startScan(target, budget: budget)
             for await event in stream {
                 if Task.isCancelled { break }
                 await self.handle(event)

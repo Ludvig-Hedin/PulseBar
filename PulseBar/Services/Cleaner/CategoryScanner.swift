@@ -8,40 +8,46 @@ import Foundation
 /// so cross-category invariants (file cap, deadline, allowlist) are auditable
 /// without jumping between files.
 enum CategoryScanner {
-    /// Default per-category deadline. Configurable per-scan from `StorageSettings`.
-    static let defaultDeadlineSeconds: TimeInterval = 30
-    static let largeFileMinBytes: UInt64 = 100 * 1_024 * 1_024 // 100 MiB
-    static let largeFileMaxItems: Int = 200
+    /// Retained as a shim for callers that scan a single category without a tier
+    /// (e.g. the post-prune Docker rescan). The authoritative caps now live on
+    /// `ScanBudget`.
+    static var defaultDeadlineSeconds: TimeInterval { ScanBudget.default.perCategoryDeadlineSeconds }
 
     static func scan(category: StorageCategory,
+                     budget: ScanBudget = .default,
                      deadline: Date,
                      cancellation: () -> Bool,
                      progress: ((UInt64, Int) -> Void)? = nil) -> CategoryResult {
         switch category {
         case .systemJunk, .userCache, .aiApps, .mailDownloads, .xcodeJunk:
             return scanStaticPaths(category: category,
+                                   budget: budget,
                                    deadline: deadline,
                                    cancellation: cancellation,
                                    progress: progress)
 
         case .trash:
             return scanStaticPaths(category: .trash,
+                                   budget: budget,
                                    deadline: deadline,
                                    cancellation: cancellation,
                                    progress: progress)
 
         case .largeFiles:
-            return scanLargeFiles(deadline: deadline,
+            return scanLargeFiles(budget: budget,
+                                  deadline: deadline,
                                   cancellation: cancellation,
                                   progress: progress)
 
         case .brewCache:
-            return scanBrewCache(deadline: deadline,
+            return scanBrewCache(budget: budget,
+                                 deadline: deadline,
                                  cancellation: cancellation,
                                  progress: progress)
 
         case .nodeCache:
-            return scanNodeCache(deadline: deadline,
+            return scanNodeCache(budget: budget,
+                                 deadline: deadline,
                                  cancellation: cancellation,
                                  progress: progress)
 
@@ -65,6 +71,7 @@ enum CategoryScanner {
     // MARK: - Static path enumeration
 
     private static func scanStaticPaths(category: StorageCategory,
+                                        budget: ScanBudget,
                                         deadline: Date,
                                         cancellation: () -> Bool,
                                         progress: ((UInt64, Int) -> Void)?) -> CategoryResult {
@@ -82,6 +89,7 @@ enum CategoryScanner {
             let result = FileEnumerator.enumerate(
                 root: path,
                 category: category,
+                maxFiles: budget.maxFilesPerCategory,
                 deadline: deadline,
                 cancellation: cancellation,
                 progress: { running, count in
@@ -108,7 +116,8 @@ enum CategoryScanner {
     /// **Reveal-only in v1** — `StorageCategory.largeFiles.defaultDeletionMode`
     /// is unchanged from `.trash`, but the UI marks these items as non-cleanable
     /// to avoid foot-guns over user data the heuristics may misread.
-    private static func scanLargeFiles(deadline: Date,
+    private static func scanLargeFiles(budget: ScanBudget,
+                                       deadline: Date,
                                        cancellation: () -> Bool,
                                        progress: ((UInt64, Int) -> Void)?) -> CategoryResult {
         var items: [CleanableItem] = []
@@ -123,8 +132,8 @@ enum CategoryScanner {
             let result = FileEnumerator.enumerate(
                 root: root,
                 category: .largeFiles,
-                maxFiles: largeFileMaxItems,
-                minSizeBytes: largeFileMinBytes,
+                maxFiles: budget.largeFileMaxItems,
+                minSizeBytes: budget.largeFileMinBytes,
                 deadline: deadline,
                 cancellation: cancellation,
                 progress: nil
@@ -134,7 +143,7 @@ enum CategoryScanner {
             truncated = truncated || result.truncated
             errors.append(contentsOf: result.errors)
 
-            if items.count >= largeFileMaxItems {
+            if items.count >= budget.largeFileMaxItems {
                 truncated = true
                 break
             }
@@ -143,8 +152,8 @@ enum CategoryScanner {
 
         // Largest first so the top of the list is the most impactful.
         items.sort { $0.sizeBytes > $1.sizeBytes }
-        if items.count > largeFileMaxItems {
-            items = Array(items.prefix(largeFileMaxItems))
+        if items.count > budget.largeFileMaxItems {
+            items = Array(items.prefix(budget.largeFileMaxItems))
             truncated = true
         }
 
@@ -158,7 +167,8 @@ enum CategoryScanner {
 
     // MARK: - Brew
 
-    private static func scanBrewCache(deadline: Date,
+    private static func scanBrewCache(budget: ScanBudget,
+                                      deadline: Date,
                                       cancellation: () -> Bool,
                                       progress: ((UInt64, Int) -> Void)?) -> CategoryResult {
         let candidates = Locations.cliCandidates(for: .brewCache)
@@ -180,6 +190,7 @@ enum CategoryScanner {
         let result = FileEnumerator.enumerate(
             root: url,
             category: .brewCache,
+            maxFiles: budget.maxFilesPerCategory,
             deadline: deadline,
             cancellation: cancellation,
             progress: progress
@@ -194,7 +205,8 @@ enum CategoryScanner {
 
     // MARK: - Node / npm / yarn / pnpm
 
-    private static func scanNodeCache(deadline: Date,
+    private static func scanNodeCache(budget: ScanBudget,
+                                      deadline: Date,
                                       cancellation: () -> Bool,
                                       progress: ((UInt64, Int) -> Void)?) -> CategoryResult {
         var items: [CleanableItem] = []
@@ -218,6 +230,7 @@ enum CategoryScanner {
             let result = FileEnumerator.enumerate(
                 root: url,
                 category: .nodeCache,
+                maxFiles: budget.maxFilesPerCategory,
                 deadline: deadline,
                 cancellation: cancellation,
                 progress: { running, count in
