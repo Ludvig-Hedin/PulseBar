@@ -125,6 +125,16 @@ enum StorageCategory: String, CaseIterable, Identifiable, Codable, Hashable {
         }
     }
 
+    /// Whether the normal file cleaner may select and delete items in this
+    /// category. Nonisolated so background builders (e.g. `SnapshotBuilder`) can
+    /// use it; `StorageViewModel.isCleanable` mirrors this via `actionKind`.
+    var isNormallyCleanable: Bool {
+        switch self {
+        case .largeFiles, .docker, .purgeableSpace, .smartScan: return false
+        default: return true
+        }
+    }
+
     /// Categories surfaced in the sidebar list, in order.
     static var displayedCategories: [StorageCategory] {
         [.systemJunk, .userCache, .aiApps, .mailDownloads, .xcodeJunk,

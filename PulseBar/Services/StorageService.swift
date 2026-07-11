@@ -7,6 +7,19 @@ import Combine
 final class StorageService: ObservableObject {
     @Published private(set) var state = StorageState()
 
+    /// Persistent scan history. Injected so the UI observes the same instance.
+    let historyStore: ScanHistoryStore
+
+    init(historyStore: ScanHistoryStore) {
+        self.historyStore = historyStore
+        // Best-effort first FDA probe so the banner state is right on first open.
+        Task { [weak self] in
+            guard let self else { return }
+            let granted = await self.fdaDetector.hasFullDiskAccess()
+            await MainActor.run { self.state.fullDiskAccessGranted = granted }
+        }
+    }
+
     private let purgeableSpaceProbe = PurgeableSpaceProbe()
     private let scanEngine = ScanEngine()
     private let cleanupService = CleanupService()
@@ -27,18 +40,12 @@ final class StorageService: ObservableObject {
     /// `scanProgress.targetCategories`.
     private var currentScanCategories: [StorageCategory] = []
 
-    /// Tier of the most recently started scan. Drives the per-run budget and,
-    /// later, which snapshot is persisted.
+    /// Tier of the most recently started scan. Drives the per-run budget and
+    /// which snapshot is persisted.
     private(set) var currentTier: ScanTier = .quick
 
-    init() {
-        // Best-effort first FDA probe so the banner state is right on first open.
-        Task { [weak self] in
-            guard let self else { return }
-            let granted = await self.fdaDetector.hasFullDiskAccess()
-            await MainActor.run { self.state.fullDiskAccessGranted = granted }
-        }
-    }
+    /// Start time of the most recent scan run, used to stamp the persisted snapshot.
+    private var currentScanStartedAt: Date?
 
     // MARK: - Disk usage
 
@@ -57,6 +64,7 @@ final class StorageService: ObservableObject {
         let target = expandSmartScan(categories)
         currentScanCategories = target
         currentTier = tier
+        currentScanStartedAt = .now
         let budget = tier.budget
         state.scanProgress = ScanProgress(
             targetCategories: target,
@@ -95,6 +103,7 @@ final class StorageService: ObservableObject {
         let target = ScanEngine.smartScanCategories
         currentScanCategories = target
         currentTier = tier
+        currentScanStartedAt = .now
         state.scanProgress = ScanProgress(targetCategories: target, currentCategory: nil, startedAt: .now)
         state.lastScanError = nil
 
@@ -266,8 +275,28 @@ final class StorageService: ObservableObject {
             state.scanProgress?.completed.insert(category)
 
         case .finished:
+            persistSnapshotIfEligible()
             state.scanProgress = nil
         }
+    }
+
+    /// Persists the just-completed scan as a history snapshot. Skips trivial
+    /// single-category rescans so the history stays meaningful.
+    private func persistSnapshotIfEligible() {
+        guard currentScanCategories.count > 1, let started = currentScanStartedAt else { return }
+        let fresh = currentScanCategories
+            .compactMap { state.categoryResults[$0] }
+            .filter { $0.isFresh }
+        guard !fresh.isEmpty else { return }
+        let snapshot = SnapshotBuilder.build(
+            id: UUID(),
+            tier: currentTier,
+            startedAt: started,
+            finishedAt: .now,
+            results: fresh,
+            disk: state.diskUsage
+        )
+        historyStore.record(snapshot)
     }
 
     private func expandSmartScan(_ categories: [StorageCategory]) -> [StorageCategory] {

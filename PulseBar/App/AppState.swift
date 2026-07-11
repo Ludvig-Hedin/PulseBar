@@ -6,9 +6,12 @@ final class AppState: ObservableObject {
     @Published var viewModel: PulseBarViewModel
     @Published var storageViewModel: StorageViewModel
     let storageService: StorageService
+    let scanHistoryStore: ScanHistoryStore
 
     init() {
-        let storage = StorageService()
+        let history = ScanHistoryStore()
+        let storage = StorageService(historyStore: history)
+        self.scanHistoryStore = history
         self.storageService = storage
         self.storageViewModel = StorageViewModel(service: storage)
         self.viewModel = PulseBarViewModel(storageService: storage)
