@@ -11,7 +11,7 @@ struct MainDashboardView: View {
     /// Sidebar groups. Settings is intentionally excluded — ⌘, opens the macOS-native
     /// Settings window which is the canonical place for prefs.
     private var performanceTabs: [DashboardTab] { [.overview, .processes, .devServers, .alerts] }
-    private var storageTabs: [DashboardTab] { [.storage] }
+    private var storageTabs: [DashboardTab] { [.storage, .storageHistory] }
 
     var body: some View {
         NavigationSplitView {
@@ -69,6 +69,10 @@ struct MainDashboardView: View {
                         case .storage:
                             StorageSection()
                                 .environmentObject(storageVM)
+                        case .storageHistory:
+                            StorageInsightsView()
+                                .environmentObject(storageVM)
+                                .environmentObject(appState.scanHistoryStore)
                         case .settings:
                             // Reachable only via deep-link; in normal nav this case is unused.
                             SettingsView()
@@ -131,6 +135,7 @@ struct MainDashboardView: View {
         case .devServers: return "Dev Servers"
         case .alerts: return "Alerts"
         case .storage: return "Storage"
+        case .storageHistory: return "History & Trends"
         case .settings: return "Settings"
         }
     }

@@ -7,6 +7,7 @@ public enum DashboardTab: String, CaseIterable, Hashable, Identifiable {
     case devServers
     case alerts
     case storage
+    case storageHistory
     case settings
 
     public var id: Self { self }
@@ -19,6 +20,7 @@ public enum DashboardTab: String, CaseIterable, Hashable, Identifiable {
         case .devServers: return "Dev Servers"
         case .alerts: return "Alerts"
         case .storage: return "Storage"
+        case .storageHistory: return "History & Trends"
         case .settings: return "Settings"
         }
     }
@@ -31,6 +33,7 @@ public enum DashboardTab: String, CaseIterable, Hashable, Identifiable {
         case .devServers: return "server.rack"
         case .alerts: return "bell"
         case .storage: return "internaldrive.fill"
+        case .storageHistory: return "chart.xyaxis.line"
         case .settings: return "gearshape"
         }
     }
@@ -39,7 +42,7 @@ public enum DashboardTab: String, CaseIterable, Hashable, Identifiable {
     public var group: DashboardTabGroup {
         switch self {
         case .overview, .processes, .devServers, .alerts: return .performance
-        case .storage: return .storage
+        case .storage, .storageHistory: return .storage
         case .settings: return .performance
         }
     }
