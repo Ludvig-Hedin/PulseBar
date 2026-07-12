@@ -280,12 +280,12 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(item: $editingRule, onDismiss: { autoQuitRules = PreferencesService.shared.autoQuitRules }) { rule in
-            AutoQuitRuleEditor(rule: rule) { updated in
+            AutoQuitRuleEditor(rule: rule, runningAppNames: runningAppNames) { updated in
                 upsertRule(updated)
             }
         }
         .sheet(isPresented: $showingNewRule, onDismiss: { autoQuitRules = PreferencesService.shared.autoQuitRules }) {
-            AutoQuitRuleEditor(rule: AutoQuitRule(name: "New rule", nameContains: "")) { created in
+            AutoQuitRuleEditor(rule: AutoQuitRule(name: "New rule", nameContains: ""), runningAppNames: runningAppNames) { created in
                 upsertRule(created)
             }
         }
@@ -473,7 +473,7 @@ struct SettingsView: View {
                      systemImage: "bolt.slash.fill",
                      color: .pink) {
             settingsRow("Enable Auto-Quit",
-                        description: "Automatically quit processes that match a rule below") {
+                        description: "Automatically quit processes that match a rule below — by their own CPU/RAM usage, or when your system is low on free RAM or CPU") {
                 Toggle("", isOn: $autoQuitEnabled).labelsHidden()
             }
             rowDivider()
@@ -504,13 +504,23 @@ struct SettingsView: View {
                         Text("No rules yet.")
                             .foregroundStyle(.secondary)
                             .font(.caption)
-                        Button("Add zombie node/bun preset") {
-                            upsertRule(.zombieNodeBunPreset)
+                        HStack(spacing: 8) {
+                            Button("Add zombie node/bun preset") {
+                                upsertRule(.zombieNodeBunPreset)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Quits node/bun processes that have run for 5+ minutes and use ≥50% CPU")
+                            .disabled(!autoQuitEnabled)
+
+                            Button("Add low-RAM preset") {
+                                editingRule = .lowMemoryPreset
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Quits an app you pick once free RAM drops below 10% — edit it to choose the app")
+                            .disabled(!autoQuitEnabled)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .help("Quits node/bun processes that have run for 5+ minutes and use ≥50% CPU")
-                        .disabled(!autoQuitEnabled)
                     }
                 } else {
                     VStack(spacing: 6) {
@@ -544,6 +554,18 @@ struct SettingsView: View {
                 .padding(.vertical, 10)
             }
         }
+    }
+
+    /// Distinct names of currently-running apps, for the "pick a running app" convenience
+    /// menu in the rule editor — cheaper than making the user type a name substring by hand.
+    private var runningAppNames: [String] {
+        var seen = Set<String>()
+        var names: [String] = []
+        for proc in vm.processes where proc.kind == .app {
+            guard seen.insert(proc.name).inserted else { continue }
+            names.append(proc.name)
+        }
+        return names.sorted()
     }
 
     // MARK: - Rule mutation
@@ -610,12 +632,25 @@ private struct AutoQuitRuleRow: View {
         var parts: [String] = []
         if !rule.nameContains.isEmpty { parts.append("name ~ “\(rule.nameContains)”") }
         if !rule.pathContains.isEmpty { parts.append("path ~ “\(rule.pathContains)”") }
-        if rule.minCpuPercent > 0 { parts.append("CPU ≥ \(Int(rule.minCpuPercent))%") }
-        if rule.minMemoryMB > 0 { parts.append("RAM ≥ \(Int(rule.minMemoryMB)) MB") }
-        if rule.minUptimeSeconds > 0 { parts.append("alive ≥ \(rule.minUptimeSeconds)s") }
+
+        switch rule.triggerMode {
+        case .processUsage:
+            if rule.minCpuPercent > 0 { parts.append("CPU ≥ \(Int(rule.minCpuPercent))%") }
+            if rule.minMemoryMB > 0 { parts.append("RAM ≥ \(Int(rule.minMemoryMB)) MB") }
+            if rule.minUptimeSeconds > 0 { parts.append("alive ≥ \(rule.minUptimeSeconds)s") }
+        case .systemPressure:
+            if rule.sysFreeMemoryBelowPercent > 0 { parts.append("free RAM < \(Int(rule.sysFreeMemoryBelowPercent))%") }
+            if rule.sysFreeMemoryBelowGB > 0 { parts.append("free RAM < \(formatGB(rule.sysFreeMemoryBelowGB))GB") }
+            if rule.sysCPUAbovePercent > 0 { parts.append("system CPU > \(Int(rule.sysCPUAbovePercent))%") }
+        }
+
         parts.append("sustained \(rule.sustainedSeconds)s")
         parts.append(rule.force ? "force quit" : "graceful quit")
         return parts.joined(separator: " · ")
+    }
+
+    private func formatGB(_ value: Double) -> String {
+        value.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(value)) : String(format: "%.1f", value)
     }
 }
 
