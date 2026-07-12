@@ -11,7 +11,7 @@ let package = Package(
         .executableTarget(
             name: "PulseBar",
             path: ".",
-            sources: ["App", "Models", "Services", "ViewModels", "Views", "Utilities"]
+            sources: ["App", "Models", "Services", "ViewModels", "Views", "Utilities", "Shared"]
         )
     ]
 )

@@ -180,6 +180,61 @@ the new full-filesystem scans. Do not re-enable.
 
 ---
 
+## Widgets subsystem
+
+A second Xcode target, `PulseBarWidgets` (macOS `app-extension`, defined in
+`project.yml` alongside `PulseBar`), ships six desktop/Notification-Center
+WidgetKit widgets — CPU, RAM, Network, Storage, Dev Servers, Top Apps — each
+in small/medium/large. Key files:
+
+- `PulseBar/Shared/WidgetSnapshot.swift` — small `Codable` struct capturing
+  exactly what widgets need (capped to top-5 dev servers/processes, last-20
+  history tails). Compiled into **both** targets.
+- `PulseBar/Shared/WidgetSnapshotStore.swift` — reads/writes that struct to
+  `UserDefaults(suiteName: "group.com.ludvighedin.PulseBar")`. `Foundation`-only
+  (no `WidgetKit` import), so the main app can use it without pulling in
+  WidgetKit just for storage.
+- `PulseBar/Services/WidgetBridgeService.swift` — main-app-only. Called from
+  `PulseBarViewModel.refresh()` every tick. Writes the snapshot on every call
+  (cheap) but throttles `WidgetCenter.shared.reloadAllTimelines()` (the call
+  that spends the OS's widget-refresh budget) to a 15s floor, gated on a
+  user-visible change, plus a 5-minute heartbeat.
+- `PulseBar/PulseBarWidgets/` — the extension: `PulseBarWidgetsBundle.swift`
+  (`@main`), `Timeline/` (shared `TimelineProvider`/`TimelineEntry` — classic,
+  no `AppIntents`), `Components/` (`RingGauge`, `MiniSparkline`,
+  `WidgetPalette`, `WidgetEmptyState` — all widget-local, not shared with the
+  dashboard), `Widgets/` (one file per kind).
+
+**Why the widget can't scan/enumerate processes itself:** WidgetKit extensions
+on macOS must run sandboxed (`PulseBarWidgets.entitlements` sets
+`app-sandbox=true`), but the main app is intentionally unsandboxed (see above)
+for `task_for_pid`/`lsof`. So the widget only ever reads
+`WidgetSnapshotStore.read()` — it has no path to `ProcessService`,
+`CleanupService`, or `PathAllowlist`, and is sandboxed so it couldn't act on
+them even if a future change added a reference by mistake. Read-only by
+construction.
+
+**XcodeGen gotcha:** `app-extension` targets do **not** auto-link
+`WidgetKit.framework`/`SwiftUI.framework` the way the main `application`
+target does — they must be listed explicitly under the target's
+`dependencies: [{sdk: ...}]` in `project.yml`, or the extension fails to
+compile with "cannot find type 'Widget' in scope" despite `import WidgetKit`
+being present.
+
+**Known gap:** `DEVELOPMENT_TEAM` is `""` for both targets. App Groups require
+a real Team ID to provision (even a free personal team). `xcodegen generate`
+wires the YAML, but registering `group.com.ludvighedin.PulseBar` with Apple
+requires one manual step in Xcode (Signing & Capabilities tab, set a team, let
+Xcode auto-manage the App Group capability) before the widgets will show live
+data on a real Mac.
+
+Color thresholds intentionally mirror `OverviewSection`'s fixed warn/critical
+bands (CPU 60/85, RAM 70/85, Storage 70/85), not `AlertsService`'s
+user-configurable ones — the widget should look like the dashboard's
+`MetricCard`s, not duplicate `PreferencesService` into the widget refresh path.
+
+---
+
 ## Naming Conventions (Swift)
 
 - PascalCase: types, structs, enums, views

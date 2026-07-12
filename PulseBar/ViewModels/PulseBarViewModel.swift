@@ -237,7 +237,45 @@ final class PulseBarViewModel: ObservableObject {
             // Hand off to the notification pipeline regardless of full/partial refresh.
             let topCPU = running.max(by: { $0.cpuPercent < $1.cpuPercent })
             NotificationService.shared.evaluate(snapshot: newSnapshot, topProcess: topCPU)
+
+            WidgetBridgeService.shared.publish(buildWidgetSnapshot(snapshot: newSnapshot, processes: running))
         }
+    }
+
+    /// Maps live app state into the small `Codable` payload the sandboxed widget
+    /// extension reads from the App Group. Runs every tick — cheap fields
+    /// (CPU/RAM/network/disk) stay fresh every 2-10s; `devServers`/`topProcesses`
+    /// only change on full-refresh ticks since `processes` is only reassigned then.
+    private func buildWidgetSnapshot(snapshot: SystemSnapshot, processes: [ProcessRow]) -> WidgetSnapshot {
+        let disk = storageService?.state.diskUsage
+        let devServers = processes
+            .filter(\.isLikelyDevServer)
+            .prefix(5)
+            .map { WidgetDevServer(name: $0.name, port: $0.ports.first ?? 0, kind: $0.devServerKind) }
+        let topProcesses = processes
+            .sorted { $0.cpuPercent > $1.cpuPercent }
+            .prefix(5)
+            .map { WidgetProcess(pid: $0.pid, name: $0.name, cpuPercent: $0.cpuPercent, memoryBytes: $0.memoryBytes, kind: $0.kind.rawValue) }
+
+        return WidgetSnapshot(
+            generatedAt: .now,
+            cpuPercent: snapshot.cpuUsagePercent,
+            cpuHistory: Array(cpuHistory.suffix(20)),
+            ramUsedBytes: snapshot.memoryUsedBytes,
+            ramTotalBytes: snapshot.memoryTotalBytes,
+            ramPressure: snapshot.memoryPressure.rawValue,
+            ramHistory: Array(ramHistory.suffix(20)),
+            netDownBytesPerSecond: snapshot.networkDownloadBytesPerSecond,
+            netUpBytesPerSecond: snapshot.networkUploadBytesPerSecond,
+            diskUsedBytes: disk?.usedBytes,
+            diskTotalBytes: disk?.totalBytes,
+            diskFreeBytes: disk?.freeBytes,
+            batteryPercent: snapshot.batteryPercent,
+            batteryIsCharging: snapshot.batteryPercent != nil ? snapshot.batteryIsCharging : nil,
+            devServers: Array(devServers),
+            topProcesses: Array(topProcesses),
+            runningProcessCount: snapshot.runningProcessCount
+        )
     }
 
     // MARK: - Filtering + sorting

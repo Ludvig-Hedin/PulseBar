@@ -22,11 +22,30 @@ Deferred work, logged as it comes up. Auto-do items when relevant to the current
   generate`. Swift Charts autolinks on `import Charts`; no explicit dependency was
   added. If a future toolchain stops autolinking, add it to the `PulseBar` target.
 
-## Cross-session note
+## WidgetKit extension (2026-07-12)
 
-- A parallel session added a **WidgetKit extension** (`PulseBar/Shared/`,
-  `PulseBar/Services/WidgetBridgeService.swift`, `PulseBar/PulseBarWidgets/`, plus
-  edits to `PulseBarViewModel.swift`). That work is **not** part of the
-  `storage-revamp` branch and its `Shared/` sources are not yet in `Package.swift`,
-  which breaks `swift build` in the shared working tree. Left untouched — owner to
-  integrate (add `Shared` to Package.swift sources, wire the widget target).
+Added a macOS desktop-widget extension: `PulseBar/Shared/` (`WidgetSnapshot`
+Codable model + `WidgetSnapshotStore` App Group bridge), `PulseBar/Services/
+WidgetBridgeService.swift` (throttled `WidgetCenter.reloadAllTimelines()`), and
+`PulseBar/PulseBarWidgets/` (six widget kinds — CPU, RAM, Network, Storage,
+Dev Servers, Top Apps — each in small/medium/large). `PulseBarViewModel.refresh()`
+publishes a snapshot every tick. `project.yml` gained a `PulseBarWidgets`
+app-extension target (sandboxed, App Group `group.com.ludvighedin.PulseBar`,
+explicit `WidgetKit.framework`/`SwiftUI.framework` SDK deps — XcodeGen does not
+auto-link these for `app-extension` targets). `Package.swift` now includes
+`Shared` so `swift build` stays green. Both `xcodebuild` schemes (`PulseBar`,
+`PulseBarWidgets`) build clean; `#Preview` macros cover all 6 kinds × 3 sizes.
+
+**Still needed before the widgets work on a real Mac** (cannot be done from
+this environment): open the project in Xcode once, set a real
+`DEVELOPMENT_TEAM` on both targets, and let Xcode register the
+`group.com.ludvighedin.PulseBar` App Group with the developer account —
+`DEVELOPMENT_TEAM` is currently `""`, and App Groups require a real team to
+provision even for a free personal team.
+
+**Deliberately out of scope for v1** (noted in the implementation plan, not
+forgotten): `AppIntents`/configurable widgets (pick which dev server/app to
+pin), Storage widget's "top junk category" breakdown (needs `categoryResults`
+from the in-flux storage-revamp scan, not just `DiskUsage` totals), real
+per-app icons in Top Apps (kind-based SF Symbol used instead — unreliable to
+load `NSWorkspace` icons from a sandboxed extension).

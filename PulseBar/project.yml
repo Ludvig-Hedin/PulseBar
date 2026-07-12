@@ -13,6 +13,7 @@ targets:
       - path: Utilities
       - path: ViewModels
       - path: Views
+      - path: Shared
       - path: Assets.xcassets
     info:
       path: Info.plist
@@ -28,3 +29,30 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: PulseBarWidgets
+        embed: true
+
+  PulseBarWidgets:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: PulseBarWidgets
+      - path: Shared
+      - path: Utilities/ByteFormatting.swift
+    info:
+      path: PulseBarWidgets/Info.plist
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      base:
+        PRODUCT_NAME: PulseBarWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.ludvighedin.PulseBar.Widget
+        CODE_SIGN_ENTITLEMENTS: PulseBarWidgets/PulseBarWidgets.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
