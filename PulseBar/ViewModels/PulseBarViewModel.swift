@@ -228,7 +228,7 @@ final class PulseBarViewModel: ObservableObject {
                 ProcessSampling.prune(activePIDs: activePIDs)
 
                 // Evaluate Auto-Quit rules — only on full refresh so we have fresh CPU%/uptime data.
-                self.runAutoQuit(processes: running)
+                self.runAutoQuit(processes: running, snapshot: newSnapshot)
             } else {
                 // Even on cheap ticks, refresh the alert list so thresholds reflect live CPU/RAM.
                 self.alerts = self.alertsService.evaluate(snapshot: newSnapshot, processes: running)
@@ -451,11 +451,11 @@ final class PulseBarViewModel: ObservableObject {
 
     /// Runs the user's auto-quit rules. Called only on full refresh ticks so we have
     /// fresh per-process CPU% samples.
-    private func runAutoQuit(processes: [ProcessRow]) {
+    private func runAutoQuit(processes: [ProcessRow], snapshot: SystemSnapshot) {
         let prefs = PreferencesService.shared
         guard prefs.autoQuitEnabled else { return }
         let rules = prefs.autoQuitRules
-        let fired = autoQuitService.evaluate(rules: rules, processes: processes)
+        let fired = autoQuitService.evaluate(rules: rules, processes: processes, snapshot: snapshot)
         guard !fired.isEmpty else { return }
         autoQuitEvents = autoQuitService.recentEvents
         if prefs.autoQuitNotify {
