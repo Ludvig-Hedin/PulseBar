@@ -110,20 +110,48 @@ Views
 The Storage tab (sidebar group "STORAGE") is an actor-based scanner derived from
 PureMac (MIT — see `THIRD_PARTY_LICENSES.md`). Key files:
 
-- `Models/StorageCategory.swift` — source of truth for the 12 categories.
+- `Models/StorageCategory.swift` — source of truth for the 13 categories.
   Adding a category = new case + paths in `Locations.swift` + switch arm in
   `CategoryScanner.swift`.
-- `Services/Cleaner/Locations.swift` — hardcoded path database.
+- `Services/Cleaner/Locations.swift` — hardcoded path database; also the dev-root
+  list and artifact-marker sets for Deep Scan.
 - `Services/Cleaner/PathAllowlist.swift` — gates scans **and** admin escalation.
   Every deletion path must pass `isScanAllowed`; admin paths must additionally
-  pass `isAdminEscalationAllowed`.
+  pass `isAdminEscalationAllowed`. Dev artifacts use a **separate** pair of gates
+  (`isArtifactScanAllowed` for reads, `isArtifactDeleteAllowed` for marker-gated
+  deletes) — `scanRoots` is NOT widened.
 - `Services/Cleaner/ScanEngine.swift` — actor; scans on `Task.detached`; yields
-  progress via `AsyncStream<ScanProgressEvent>`.
+  progress via `AsyncStream<Event>`. Categories run concurrently, bounded by
+  `ScanBudget.maxConcurrentCategories`.
 - `Services/Cleaner/CleanupService.swift` — actor; trash / permanent / admin
-  modes. AppleScript escalation lives here (not in `CommandRunner`).
+  modes. AppleScript escalation lives here (not in `CommandRunner`). `.devArtifacts`
+  items are force-trashed (never permanent/admin) via the marker gate.
 - `Services/Cleaner/FullDiskAccessDetector.swift` — probes TCC paths; memoised 30s.
 - `Services/StorageService.swift` — `@MainActor` orchestrator + `@Published`
   state. Disk-usage probe runs every `PulseBarViewModel.refresh()` tick.
+
+Scan tiers, auto-clean, inventory, history:
+- `Models/ScanTier.swift` / `Models/ScanBudget.swift` — Quick / Deep / Ultra tiers
+  and their per-run resource envelopes (deadlines, caps, concurrency).
+- `Services/Cleaner/AutoCleanCoordinator.swift` — the **only** unattended
+  scan→delete path. Mode is a hard-pinned local `.trash` constant (never from the
+  persisted `AutoCleanPolicy`); a byte/item circuit breaker aborts + notifies
+  instead of deleting when a run finds more than expected. First use gated by a
+  one-time consent sheet.
+- `Services/Cleaner/ArtifactEnumerator.swift` — Deep Scan; prune-on-hit walk that
+  reports whole marker dirs (`node_modules`, `build`, `target`, `.venv`, …).
+  Ambiguous markers require a sibling project manifest.
+- `Services/Cleaner/DiskInventoryEngine.swift` — Ultra Scan; read-only whole-disk
+  size map producing `InventoryNode` (no path into `CleanupService`). Bypasses the
+  allowlist for READS only; deletion stays gated.
+- `Services/ScanHistoryStore.swift` — persists each multi-category scan as JSON
+  under `~/Library/Application Support/PulseBar/scans/` (lean `index.json` + fat
+  `<uuid>.json`). Provides repeat-offender rollup + trend series. `AutoCleanPolicy`
+  persists via `PreferencesService`.
+- UI: `Views/Dashboard/Storage/DiskInventoryView.swift` (Disk Map subview) and
+  `Views/Dashboard/Storage/History/*` (the `.storageHistory` sidebar tab, using
+  Swift Charts). New source files under existing dirs are picked up by
+  `xcodegen generate`; Swift Charts autolinks on `import Charts`.
 
 Safety guardrails:
 - Trash-first by default; permanent + admin opt-in per cleanup.
@@ -139,6 +167,12 @@ Safety guardrails:
   flow.
 - Docker prune intentionally omits `--volumes`; volume deletion requires a
   separate product decision and stronger confirmation copy.
+- Auto-clean (Quick Clean) is **trash-only forever** and manual-only (no
+  on-launch/scheduled trigger). Never read the deletion mode from the persisted
+  policy — the coordinator pins `.trash` locally.
+- Ultra Scan is read-only: `InventoryNode` has no route to `CleanupService`.
+  Cleaning from the Disk Map (reconstructing a `CleanableItem` that must re-pass
+  the gates) is intentionally deferred — see `BACKLOG.md`.
 
 **Sandbox:** `PulseBar.entitlements` sets `com.apple.security.app-sandbox=false`.
 Required for both the existing process inspection (`task_for_pid`, `lsof`) and
