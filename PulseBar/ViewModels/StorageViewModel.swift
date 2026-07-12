@@ -100,6 +100,88 @@ final class StorageViewModel: ObservableObject {
 
     func refreshDiskUsage() { service.refreshDiskUsage() }
 
+    // MARK: - Insights (deterministic + optional AI)
+
+    private let aiService = AISummaryService()
+
+    /// Plain-language, ranked insights computed locally from the latest scan,
+    /// disk usage, and history. Always available, no network.
+    var insights: [StorageInsight] {
+        StorageInsightsEngine.generate(
+            results: state.categoryResults,
+            disk: state.diskUsage,
+            offenders: service.historyStore.repeatOffenders(minAppearances: 2),
+            junkTrend: service.historyStore.junkTrend
+        )
+    }
+
+    /// True once a scan with actionable results exists (insight list isn't just "all clear").
+    var hasActionableInsights: Bool {
+        insights.contains { $0.kind != .allClear }
+    }
+
+    @Published var aiSummary: String?
+    @Published private(set) var isGeneratingAISummary = false
+    @Published var aiSummaryError: String?
+    @Published var showAIKeyEntry = false
+
+    var hasAIKey: Bool { KeychainStore.exists(account: AISummaryService.keychainAccount) }
+
+    /// Entry point for "Explain with AI". Prompts for the key on first use.
+    func requestAISummary() {
+        guard !isGeneratingAISummary else { return }
+        guard let key = KeychainStore.get(account: AISummaryService.keychainAccount) else {
+            showAIKeyEntry = true
+            return
+        }
+        runAISummary(key: key)
+    }
+
+    func saveAIKeyAndSummarize(_ key: String) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        KeychainStore.set(trimmed, account: AISummaryService.keychainAccount)
+        showAIKeyEntry = false
+        runAISummary(key: trimmed)
+    }
+
+    func cancelAIKeyEntry() { showAIKeyEntry = false }
+
+    func removeAIKey() {
+        KeychainStore.delete(account: AISummaryService.keychainAccount)
+        aiSummary = nil
+        aiSummaryError = nil
+    }
+
+    private func runAISummary(key: String) {
+        isGeneratingAISummary = true
+        aiSummaryError = nil
+        let insightsSnapshot = insights
+        let categories = state.categoryResults.values.map {
+            CategorySummary(category: $0.category, totalSizeBytes: $0.totalSizeBytes,
+                            itemCount: $0.itemCount, truncated: $0.truncated)
+        }
+        let folders = service.historyStore.index.first?.topFolders ?? []
+        let disk = state.diskUsage
+        Task {
+            do {
+                let text = try await aiService.interpret(
+                    insights: insightsSnapshot,
+                    categories: categories,
+                    folders: folders,
+                    diskFreeBytes: disk?.freeBytes ?? 0,
+                    diskTotalBytes: disk?.totalBytes ?? 0,
+                    key: key
+                )
+                self.aiSummary = text
+                self.isGeneratingAISummary = false
+            } catch {
+                self.aiSummaryError = error.localizedDescription
+                self.isGeneratingAISummary = false
+            }
+        }
+    }
+
     // MARK: - Scans
 
     func startSmartScan() {

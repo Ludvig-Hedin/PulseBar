@@ -10,6 +10,11 @@ struct StorageDashboardView: View {
 
             statsGrid
 
+            if storageVM.state.hasFreshScan {
+                InsightsCard()
+                    .environmentObject(storageVM)
+            }
+
             if let usage = storageVM.diskUsage {
                 breakdownCard(usage)
             }

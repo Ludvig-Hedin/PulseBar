@@ -144,6 +144,15 @@ Scan tiers, auto-clean, inventory, history:
 - `Services/Cleaner/DiskInventoryEngine.swift` — Ultra Scan; read-only whole-disk
   size map producing `InventoryNode` (no path into `CleanupService`). Bypasses the
   allowlist for READS only; deletion stays gated.
+- `Services/StorageInsightsEngine.swift` — deterministic, offline engine that
+  ranks scan results into plain-language `StorageInsight`s (reclaimable, big
+  footprint, repeat offender, trend, disk pressure). Always on; the "smart" layer.
+- `Services/AISummaryService.swift` — OPTIONAL natural-language readout via a
+  cheap LLM (Claude Haiku, raw HTTPS to the Messages API — Swift has no Anthropic
+  SDK). Off by default; requires the user's own key in the Keychain
+  (`Utilities/KeychainStore.swift`). Sends only an aggregated summary (category
+  sizes, `~`-abbreviated folder names, disk totals) — never a file listing — and
+  gates first use behind a consent + privacy disclosure (`AIKeyEntryDialog`).
 - `Services/ScanHistoryStore.swift` — persists each multi-category scan as JSON
   under `~/Library/Application Support/PulseBar/scans/` (lean `index.json` + fat
   `<uuid>.json`). Provides repeat-offender rollup + trend series. `AutoCleanPolicy`

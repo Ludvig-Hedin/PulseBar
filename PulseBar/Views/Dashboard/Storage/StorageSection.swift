@@ -81,6 +81,12 @@ struct StorageSection: View {
                 onAccept: { storageVM.confirmAutoCleanConsent() }
             )
         }
+        .sheet(isPresented: $storageVM.showAIKeyEntry) {
+            AIKeyEntryDialog(
+                onCancel: { storageVM.cancelAIKeyEntry() },
+                onSave: { storageVM.saveAIKeyAndSummarize($0) }
+            )
+        }
     }
 
     /// Banner for the non-success auto-clean outcomes. Success reuses the green
