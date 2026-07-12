@@ -120,12 +120,31 @@ enum PathAllowlist {
 
     /// DELETE gate for developer artifacts. True only when the path is inside a
     /// dev root (and not protected) AND its own leaf name is a recognised
-    /// artifact marker. So `.../proj/node_modules` is deletable, but
-    /// `.../proj/node_modules/some.js` or `.../proj/src` is not.
+    /// artifact marker. Unconditional markers (`node_modules`, `Pods`, …) pass
+    /// directly; project-scoped markers (`build`, `dist`, `target`, `venv`,
+    /// `.gradle`) additionally require a sibling project manifest — so this last
+    /// line of defense is exactly as strict as the discovery walk, and a user
+    /// folder merely named `build` can never be trashed.
     static func isArtifactDeleteAllowed(_ url: URL) -> Bool {
         guard isArtifactScanAllowed(url), let resolved = resolvedPath(url) else { return false }
         let name = (resolved as NSString).lastPathComponent
-        return artifactMarkers.contains(name)
+        if Locations.unconditionalArtifactMarkers.contains(name) { return true }
+        if Locations.projectScopedArtifactMarkers.contains(name) {
+            return parentHasProjectManifest(URL(fileURLWithPath: resolved))
+        }
+        return false
+    }
+
+    /// True if the directory's parent contains a project manifest (package.json,
+    /// Cargo.toml, …), i.e. it's a real project — not a coincidentally-named dir.
+    private static func parentHasProjectManifest(_ dir: URL) -> Bool {
+        let parent = dir.deletingLastPathComponent()
+        for manifest in Locations.projectManifests {
+            if FileManager.default.fileExists(atPath: parent.appendingPathComponent(manifest).path) {
+                return true
+            }
+        }
+        return false
     }
 
     /// Directory-boundary-aware prefix check. Prevents `~/.cargo/registry-backup`

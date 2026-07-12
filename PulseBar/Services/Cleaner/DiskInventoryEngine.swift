@@ -55,6 +55,10 @@ actor DiskInventoryEngine {
 
             func walk(_ dir: URL, depth: Int) -> (bytes: UInt64, files: Int, newest: Date, node: InventoryNode?) {
                 if stop() { return (0, 0, .distantPast, nil) }
+                // Hard recursion ceiling — bounds stack depth independently of the
+                // node cap (which only increments on unwind). Well past any real
+                // filesystem nesting.
+                if depth > 64 { return (0, 0, .distantPast, nil) }
 
                 var bytes: UInt64 = 0
                 var files = 0
